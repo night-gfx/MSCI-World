@@ -1,0 +1,83 @@
+from __future__ import annotations
+
+import json
+from datetime import datetime, timezone
+from pathlib import Path
+
+import pandas as pd
+import yfinance as yf
+
+
+ROOT = Path(__file__).resolve().parents[1]
+OUTPUT = ROOT / "data" / "dashboard.json"
+
+INSTRUMENTS = {
+    "amundi_2x": {
+        "name": "Amundi MSCI World (2x) Leveraged UCITS ETF Acc",
+        "ticker": "LWLD.PA",
+        "isin": "FR0014010HV4",
+    },
+    "ishares_msci_world": {
+        "name": "iShares MSCI World UCITS ETF USD (Dist)",
+        "ticker": "IQQW.DE",
+        "isin": "IE00B0M62Q58",
+    },
+}
+
+
+def download(ticker: str, period: str, interval: str) -> list[list[float | int]]:
+    frame = yf.download(
+        ticker,
+        period=period,
+        interval=interval,
+        auto_adjust=False,
+        prepost=False,
+        progress=False,
+        threads=False,
+    )
+    if frame.empty:
+        raise RuntimeError(f"No data returned for {ticker} ({interval})")
+    if isinstance(frame.columns, pd.MultiIndex):
+        frame.columns = frame.columns.get_level_values(0)
+    price_column = "Adj Close" if "Adj Close" in frame.columns else "Close"
+    values = frame[[price_column]].reset_index()
+    values.columns = ["date", "price"]
+    values["date"] = pd.to_datetime(values["date"], utc=True, errors="coerce")
+    values["price"] = pd.to_numeric(values["price"], errors="coerce")
+    values = values.dropna().sort_values("date").drop_duplicates("date", keep="last")
+    return [
+        [int(row.date.timestamp() * 1000), round(float(row.price), 6)]
+        for row in values.itertuples(index=False)
+    ]
+
+
+def merge_points(old: list, fresh: list) -> list:
+    by_timestamp = {int(point[0]): point for point in old}
+    for point in fresh:
+        by_timestamp.setdefault(int(point[0]), point)
+    return [by_timestamp[key] for key in sorted(by_timestamp)]
+
+
+def main() -> None:
+    previous = {}
+    if OUTPUT.exists():
+        previous = json.loads(OUTPUT.read_text(encoding="utf-8"))
+
+    result = {
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "instruments": {},
+    }
+    previous_instruments = previous.get("instruments", {})
+    for key, config in INSTRUMENTS.items():
+        old = previous_instruments.get(key, {})
+        daily = merge_points(old.get("daily", []), download(config["ticker"], "max", "1d"))
+        intraday = merge_points(old.get("intraday", []), download(config["ticker"], "60d", "5m"))
+        result["instruments"][key] = {**config, "daily": daily, "intraday": intraday}
+
+    OUTPUT.parent.mkdir(parents=True, exist_ok=True)
+    OUTPUT.write_text(json.dumps(result, separators=(",", ":")), encoding="utf-8")
+    print(f"Wrote {OUTPUT} with {len(result['instruments'])} instruments")
+
+
+if __name__ == "__main__":
+    main()

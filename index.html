@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>MSCI World ETF Analyse</title>
+  <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+  <style>
+    :root{font-family:Arial,sans-serif;color:#0f172a;background:#f8fafc;--blue:#4f46e5;--green:#16a34a;--red:#dc2626}
+    *{box-sizing:border-box} body{margin:0}.shell{max-width:1600px;margin:auto;padding:18px}.top{display:flex;align-items:center;gap:14px;flex-wrap:wrap}.top h1{font-size:clamp(22px,3vw,30px);margin:0 auto 0 0}.top select{min-width:min(390px,100%);padding:11px;border:1px solid #cbd5e1;border-radius:9px;background:white;font-weight:700}.meta{margin:8px 0 15px;color:#64748b;font-size:13px}.status{display:inline-flex;align-items:center;gap:7px}.dot{width:8px;height:8px;border-radius:50%;background:var(--green)}.controls{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px}.control{background:white;border:1px solid #e2e8f0;border-radius:10px;padding:8px 10px}.control label{font-size:12px;color:#64748b;margin-right:6px}.control input,.control select{border:0;outline:0;font-weight:700;background:transparent}.tabs{display:flex;gap:8px;margin:12px 0}.tab{border:1px solid #c7d2fe;background:white;padding:10px 16px;border-radius:9px;font-weight:800;cursor:pointer}.tab.active{background:var(--blue);color:white}.panel{background:white;border:1px solid #e2e8f0;border-radius:14px;box-shadow:0 8px 24px rgba(15,23,42,.06);overflow:hidden}.panel-title{padding:13px 16px 0;font-weight:800}.chart{height:clamp(470px,70vh,760px)}#analytics{display:none}.notice{display:none;padding:12px;border-radius:8px;background:#fff7ed;color:#9a3412;margin-bottom:12px}.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+    @media(max-width:700px){.shell{padding:10px}.top select{width:100%;min-width:0}.chart{height:620px}.controls{display:grid;grid-template-columns:1fr 1fr}.control{min-width:0}.control input{width:64px}}
+  </style>
+</head>
+<body>
+<main class="shell">
+  <div class="top">
+    <h1>MSCI World ETF Analyse</h1>
+    <label class="sr-only" for="instrument">ETF auswählen</label>
+    <select id="instrument"></select>
+  </div>
+  <div class="meta"><span class="status"><span class="dot"></span><span id="updated">Daten werden geladen …</span></span> · <span id="instrumentMeta"></span></div>
+  <div id="notice" class="notice" role="status"></div>
+  <div class="tabs" role="tablist">
+    <button class="tab active" data-target="tools" role="tab" aria-selected="true">Trading Tools</button>
+    <button class="tab" data-target="analytics" role="tab" aria-selected="false">Trading Analytics</button>
+  </div>
+  <div class="controls">
+    <div class="control"><label for="range">Zeitraum</label><select id="range"><option value="365">1J</option><option value="730">2J</option><option value="1825">5J</option><option value="0" selected>MAX</option></select></div>
+    <div class="control"><label for="regression">Regression Tage</label><input id="regression" type="number" min="2" value="365"></div>
+    <div class="control"><label for="bollinger">Bollinger</label><input id="bollinger" type="number" min="2" value="20"></div>
+    <div class="control"><label for="kalmanQ">Kalman Q</label><input id="kalmanQ" type="number" min="0.001" step="0.1" value="1"></div>
+    <div class="control"><label for="kalmanR">Kalman R</label><input id="kalmanR" type="number" min="0.001" step="1" value="25"></div>
+  </div>
+  <section id="tools" class="panel"><div class="panel-title">Kurs und Indikatoren · Daily Adj Close</div><div id="toolsChart" class="chart" aria-label="Daily-Kurs mit Regression, Bollinger und Kalman-Steigung"></div></section>
+  <section id="analytics" class="panel"><div class="panel-title">Indexierte Entwicklung · 5-Minuten Adj Close</div><div id="analyticsChart" class="chart" aria-label="Indexierte 5-Minuten-Kursentwicklung"></div></section>
+</main>
+<script>
+const ids=["range","regression","bollinger","kalmanQ","kalmanR"], state=JSON.parse(localStorage.getItem("msci-world-state")||"{}");
+for(const id of ids) if(state[id]!=null) document.getElementById(id).value=state[id];
+let payload=null;
+const dates=p=>p.map(d=>new Date(d[0])), prices=p=>p.map(d=>+d[1]);
+function regression(y,n){const start=Math.max(0,y.length-n),m=y.length-start;if(m<2)return Array(y.length).fill(null);let sx=0,sy=0,sxy=0,sxx=0;for(let i=0;i<m;i++){sx+=i;sy+=y[start+i];sxy+=i*y[start+i];sxx+=i*i}const slope=(m*sxy-sx*sy)/(m*sxx-sx*sx),intercept=(sy-slope*sx)/m;return Array(start).fill(null).concat(Array.from({length:m},(_,i)=>intercept+slope*i))}
+function rolling(y,n){let mid=[],upper=[],lower=[];for(let i=0;i<y.length;i++){if(i<n-1){mid.push(null);upper.push(null);lower.push(null);continue}const a=y.slice(i-n+1,i+1),m=a.reduce((s,v)=>s+v,0)/n,sd=Math.sqrt(a.reduce((s,v)=>s+(v-m)**2,0)/n);mid.push(m);upper.push(m+2*sd);lower.push(m-2*sd)}return{mid,upper,lower}}
+function kalman(y,q,r){let x=y[0],p=r,out=[x];for(let i=1;i<y.length;i++){p+=q;const k=p/(p+r);x=x+k*(y[i]-x);p=(1-k)*p;out.push(x)}return out}
+function selected(){return document.getElementById("instrument").value}
+function windowed(points){const days=+document.getElementById("range").value;if(!days)return points;const cutoff=points.at(-1)[0]-days*86400000;return points.filter(p=>p[0]>=cutoff)}
+const layoutBase={paper_bgcolor:"#fff",plot_bgcolor:"#fff",font:{family:"Arial",color:"#0f172a"},margin:{l:52,r:24,t:30,b:44},hovermode:"x unified",legend:{orientation:"h",y:1.08},xaxis:{rangebreaks:[{bounds:["sat","mon"]}],gridcolor:"#f1f5f9"},yaxis:{gridcolor:"#f1f5f9"}};
+function render(){if(!payload)return;const inst=payload.instruments[selected()],daily=windowed(inst.daily),x=dates(daily),y=prices(daily),n=Math.max(2,+document.getElementById("regression").value||365),b=Math.max(2,+document.getElementById("bollinger").value||20),bands=rolling(y,b),k=kalman(y,Math.max(.001,+document.getElementById("kalmanQ").value||1),Math.max(.001,+document.getElementById("kalmanR").value||25)),slope=k.map((v,i)=>i?v-k[i-1]:null);
+document.getElementById("instrumentMeta").textContent=`${inst.isin} · Yahoo ${inst.ticker}`;
+Plotly.react("toolsChart",[
+ {x,y,type:"scatter",mode:"lines",name:"Adj Close",line:{color:"#0f172a",width:2.4},xaxis:"x",yaxis:"y"},
+ {x,y:regression(y,n),type:"scatter",mode:"lines",name:`Regression ${n}T`,line:{color:"#7c3aed",dash:"dash"},xaxis:"x",yaxis:"y"},
+ {x,y:bands.upper,type:"scatter",mode:"lines",name:"Bollinger",line:{color:"#60a5fa",dash:"dot"},xaxis:"x",yaxis:"y"},
+ {x,y:bands.lower,type:"scatter",mode:"lines",showlegend:false,line:{color:"#60a5fa",dash:"dot"},fill:"tonexty",fillcolor:"rgba(59,130,246,.07)",xaxis:"x",yaxis:"y"},
+ {x,y:slope,type:"bar",name:"Kalman-Steigung",marker:{color:slope.map(v=>v>=0?"#16a34a":"#dc2626")},xaxis:"x2",yaxis:"y2"}
+],{...layoutBase,grid:{rows:2,columns:1,subplots:[["xy"],["x2y2"]],roworder:"top to bottom"},xaxis:{...layoutBase.xaxis,anchor:"y",matches:"x2",showticklabels:false},xaxis2:{...layoutBase.xaxis,anchor:"y2"},yaxis:{domain:[.28,1]},yaxis2:{domain:[0,.22],zeroline:true,gridcolor:"#f1f5f9"},bargap:.08},{responsive:true,displaylogo:false});
+const intra=windowed(inst.intraday),ix=dates(intra),iy=prices(intra),base=iy[0]||1,indexed=iy.map(v=>100*v/base);Plotly.react("analyticsChart",[{x:ix,y:indexed,type:"scatter",mode:"lines",name:"Buy & Hold Index",line:{color:"#4f46e5",width:2}}],{...layoutBase,yaxis:{title:"Index 100",gridcolor:"#f1f5f9"}},{responsive:true,displaylogo:false});
+history.replaceState(null,"",`?instrument=${encodeURIComponent(selected())}`);localStorage.setItem("msci-world-state",JSON.stringify({instrument:selected(),...Object.fromEntries(ids.map(id=>[id,document.getElementById(id).value]))}));}
+fetch(`data/dashboard.json?v=${Date.now()}`).then(r=>{if(!r.ok)throw Error(r.status);return r.json()}).then(data=>{payload=data;const select=document.getElementById("instrument");for(const[key,v]of Object.entries(data.instruments)){const o=document.createElement("option");o.value=key;o.textContent=v.name;select.appendChild(o)}const requested=new URLSearchParams(location.search).get("instrument");select.value=data.instruments[requested]?requested:(state.instrument&&data.instruments[state.instrument]?state.instrument:Object.keys(data.instruments)[0]);document.getElementById("updated").textContent=`Stand ${new Date(data.updated_at).toLocaleString("de-DE")}`;render()}).catch(err=>{const n=document.getElementById("notice");n.style.display="block";n.textContent=`Daten konnten nicht geladen werden (${err.message}). Bitte später erneut versuchen.`});
+document.addEventListener("change",e=>{if(e.target.id==="instrument")state.instrument=e.target.value;render()});document.addEventListener("input",e=>{if(ids.includes(e.target.id))render()});
+for(const button of document.querySelectorAll(".tab"))button.addEventListener("click",()=>{document.querySelectorAll(".tab").forEach(b=>{b.classList.toggle("active",b===button);b.setAttribute("aria-selected",b===button)});document.querySelectorAll("section.panel").forEach(s=>s.style.display=s.id===button.dataset.target?"block":"none");setTimeout(()=>{Plotly.Plots.resize(button.dataset.target==="tools"?"toolsChart":"analyticsChart")},0)});
+</script>
+</body>
+</html>
