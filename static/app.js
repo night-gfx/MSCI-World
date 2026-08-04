@@ -51,43 +51,67 @@ function kalman2d(y,q,r){
   }
   return out;
 }
-function axisBase(){ return {rangebreaks:[{bounds:["sat","mon"]}],gridcolor:"#f1f5f9",zerolinecolor:"#cbd5e1"}; }
-function baseLayout(){ return {paper_bgcolor:"#fff",plot_bgcolor:"#fff",font:{family:"Arial",color:"#0f172a"},margin:{l:52,r:24,t:45,b:42},hovermode:"x unified",legend:{orientation:"h",y:1.05,font:{size:10}}}; }
-function lineTrace(x,y,name,color,dash="solid",axis=1){ return {x,y,type:"scatter",mode:"lines",name,line:{color,width:2,dash},xaxis:axis===1?"x":`x${axis}`,yaxis:axis===1?"y":`y${axis}`,connectgaps:false}; }
+function axisBase(){ return {rangebreaks:[{bounds:["sat","mon"]}],showgrid:false,showline:false,ticks:"",tickfont:{size:10,color:"#64748b"},automargin:true}; }
+function baseLayout(){ return {paper_bgcolor:"#fff",plot_bgcolor:"#fff",font:{family:"Arial, sans-serif",color:"#0f172a"},hovermode:"x unified",hoverdistance:-1,hoverlabel:{bgcolor:"#0f172a",bordercolor:"#0f172a",font:{color:"#fff",size:12}}}; }
+function lineTrace(x,y,name,color,dash="solid",axis=1,width=2){ return {x,y,type:"scatter",mode:"lines",name,line:{color,width,dash},xaxis:axis===1?"x":`x${axis}`,yaxis:axis===1?"y":`y${axis}`,connectgaps:false}; }
+function splitSigned(x,y,axis,name){
+  const positive=y.map(v=>v>=0?v:null),negative=y.map(v=>v<0?v:null);
+  return [
+    {...lineTrace(x,positive,`${name} positiv`,"#16a34a","solid",axis,1.9),showlegend:false,hoverinfo:"none",fill:"tozeroy",fillcolor:"rgba(22,163,74,.11)"},
+    {...lineTrace(x,negative,`${name} negativ`,"#dc2626","solid",axis,1.9),showlegend:false,hoverinfo:"none",fill:"tozeroy",fillcolor:"rgba(220,38,38,.10)"}
+  ];
+}
+function splitTrend(x,y,name){
+  const rising=y.map((v,i)=>i&&v>=y[i-1]?v:null),falling=y.map((v,i)=>i&&v<y[i-1]?v:null);
+  return [
+    {...lineTrace(x,rising,`${name} steigend`,"#16a34a","solid",1,2),showlegend:false,hoverinfo:"skip"},
+    {...lineTrace(x,falling,`${name} fallend`,"#dc2626","solid",1,2),showlegend:false,hoverinfo:"skip"}
+  ];
+}
+function installCrossPanelHover(graphId){
+  const graph=$(graphId)?.querySelector(".js-plotly-plot"); if(!graph||!graph._fullLayout||typeof graph.on!=="function")return;
+  if(graph.__msciHoverHandler&&typeof graph.removeListener==="function"){graph.removeListener("plotly_hover",graph.__msciHoverHandler);graph.removeListener("plotly_unhover",graph.__msciUnhoverHandler);}
+  let line=graph.querySelector(".cross-panel-hover-line");if(!line){line=document.createElement("div");line.className="cross-panel-hover-line";graph.appendChild(line);}
+  graph.__msciHoverHandler=event=>{const point=event?.points?.[0],size=graph._fullLayout?._size;if(!point?.xaxis||!size){line.style.display="none";return;}line.style.left=`${point.xaxis.d2p(point.x)+point.xaxis._offset}px`;line.style.top=`${size.t}px`;line.style.height=`${size.h}px`;line.style.display="block";};
+  graph.__msciUnhoverHandler=()=>{line.style.display="none";};graph.on("plotly_hover",graph.__msciHoverHandler);graph.on("plotly_unhover",graph.__msciUnhoverHandler);
+}
+const PLOT_CONFIG={responsive:true,displaylogo:false,scrollZoom:true,modeBarButtonsToAdd:["drawline","drawopenpath","eraseshape","resetScale2d"]};
 
 function renderTools(){
   const points=filterRange(currentInstrument().daily,toolRange), x=pointDates(points), y=pointPrices(points);
-  const traces=[lineTrace(x,y,"Adj Close","#0f172a")], panels=[];
+  const traces=[{...lineTrace(x,y,currentInstrument().name,"#0f172a","solid",1,2.5),hovertemplate:`${currentInstrument().name}: %{y:.4f}<extra></extra>`}], panels=[];
   if($("showBollinger").checked){
     const bands=rolling(y,Math.max(2,+$("bollingerWindow").value||20),Math.max(.1,+$("bollingerStd").value||2));
-    traces.push({...lineTrace(x,bands.upper,"Bollinger Upper","#60a5fa","dot"),fill:null});
-    traces.push({...lineTrace(x,bands.lower,"Bollinger Lower","#60a5fa","dot"),fill:"tonexty",fillcolor:"rgba(59,130,246,.08)"});
-    traces.push(lineTrace(x,bands.mid,"Bollinger Mitte","#2563eb"));
-    panels.push({label:"Bollinger-Abstand",series:[y.map((v,i)=>bands.upper[i]==null?null:v-bands.upper[i]),y.map((v,i)=>bands.lower[i]==null?null:v-bands.lower[i])]});
+    traces.push({...lineTrace(x,bands.upper,"Bollinger Upper","#60a5fa","dot",1,1.2),hoverinfo:"skip"});
+    traces.push({...lineTrace(x,bands.lower,"Bollinger Lower","#60a5fa","dot",1,1.2),hoverinfo:"skip",fill:"tonexty",fillcolor:"rgba(59,130,246,.08)"});
+    traces.push({...lineTrace(x,bands.mid,"Bollinger Mittelwert","#2563eb","solid",1,1.4),hoverinfo:"skip"});
+    panels.push({label:"Bollinger Bands",color:"#2563eb",series:[y.map((v,i)=>bands.upper[i]==null?null:v-bands.upper[i]),y.map((v,i)=>bands.lower[i]==null?null:v-bands.lower[i])]});
   }
   if($("showRegression").checked){
     for(const [id,label] of [["regShort","Kurz"],["regMedium","Mittel"],["regLong","Lang"]]){
       const n=Math.max(2,+$(id).value||2), reg=regression(y,n);
-      traces.push(lineTrace(x,reg,`Regression ${label} (${n}T)`,"#7c3aed","dash"));
-      panels.push({label:`Regression ${label}`,series:[y.map((v,i)=>reg[i]==null?null:v-reg[i])]});
+      const period={182:"6 Monate",365:"1 Jahr",730:"2 Jahre",1825:"5 Jahre"}[n]||`${n} Tage`;
+      traces.push({...lineTrace(x,reg,`Regression ${period}`,"#7c3aed","dash",1,2.1),hoverinfo:"skip"});
+      panels.push({label:`Regression ${period}`,color:"#7c3aed",series:[y.map((v,i)=>reg[i]==null?null:v-reg[i])]});
     }
   }
   if($("showKalman").checked){
     const k=kalman2d(y,Math.max(.001,+$("kalmanQ").value||1),Math.max(.001,+$("kalmanR").value||25));
-    traces.push(lineTrace(x,k,"Kalman-Filter 2D","#db2777"));
-    panels.push({label:"Kalman-Steigung zum Vortag",bar:k.map((v,i)=>i?v-k[i-1]:null)});
+    traces.push(...splitTrend(x,k,"Kalman 2D"));
+    panels.push({label:"Kalman-Steigung zum Vortag",color:"#db2777",bar:k.map((v,i)=>i?v-k[i-1]:null)});
   }
-  const rows=1+panels.length, gap=.012, small=.12, main=Math.max(.38,1-panels.length*small-panels.length*gap);
-  const layout={...baseLayout(),height:Math.max(560,420+panels.length*105),showlegend:true,xaxis:{...axisBase(),anchor:"y",showticklabels:false},yaxis:{domain:[1-main,1],gridcolor:"#f1f5f9"},bargap:.06,annotations:[]};
+  const rows=1+panels.length,total=420+panels.length*105,main=420/total,small=105/total;
+  const layout={...baseLayout(),height:total+114,showlegend:false,hoversubplots:"axis",margin:{l:48,r:88,t:72,b:42},xaxis:{...axisBase(),anchor:"y",showticklabels:false,hoverformat:"%d.%m.%Y %H:%M"},yaxis:{domain:[1-main,1],showgrid:false,showline:false,zeroline:false,tickformat:".3f",tickfont:{size:10,color:"#64748b"},automargin:true},bargap:.06,annotations:[],shapes:[]};
   panels.forEach((panel,index)=>{
-    const axis=index+2, top=1-main-gap-index*(small+gap), bottom=Math.max(0,top-small);
-    layout[`xaxis${axis}`]={...axisBase(),anchor:`y${axis}`,matches:"x",showticklabels:index===panels.length-1};
-    layout[`yaxis${axis}`]={domain:[bottom,top],gridcolor:"#f8fafc",zeroline:true,zerolinecolor:"#94a3b8"};
-    layout.annotations.push({xref:"paper",yref:"paper",x:.005,y:top,text:panel.label,showarrow:false,xanchor:"left",yanchor:"top",font:{size:10,color:"#64748b"}});
+    const axis=index+2, top=1-main-index*small, bottom=Math.max(0,top-small);
+    layout[`xaxis${axis}`]={...axisBase(),anchor:`y${axis}`,matches:"x",showticklabels:index===panels.length-1,hoverformat:"%d.%m.%Y %H:%M"};
+    layout[`yaxis${axis}`]={domain:[bottom,top],showgrid:false,showline:false,zeroline:false,showticklabels:false,ticks:""};
+    layout.shapes.push({type:"line",xref:"paper",x0:0,x1:1,yref:`y${axis}`,y0:0,y1:0,line:{color:"#111827",width:.55},layer:"above"});
+    layout.annotations.push({xref:"paper",yref:`y${axis}`,x:.006,y:0,text:panel.label,showarrow:false,xanchor:"left",yanchor:"bottom",yshift:3,font:{family:"Arial, sans-serif",size:10,color:panel.color},opacity:.52});
     if(panel.bar){ traces.push({x,y:panel.bar,type:"bar",name:panel.label,showlegend:false,marker:{color:panel.bar.map(v=>v>=0?"#16a34a":"#dc2626")},xaxis:`x${axis}`,yaxis:`y${axis}`,hovertemplate:"%{y:.4f}<extra></extra>"}); }
-    else panel.series.forEach((series,i)=>traces.push({...lineTrace(x,series,panel.label,i?"#60a5fa":"#2563eb","solid",axis),showlegend:false,fill:"tozeroy",fillcolor:i?"rgba(96,165,250,.08)":"rgba(37,99,235,.08)"}));
+    else panel.series.forEach((series,i)=>traces.push(...splitSigned(x,series,axis,panel.series.length>1?(i?"Kurs - Lower Band":"Kurs - Upper Band"):panel.label)));
   });
-  Plotly.react("toolsChart",traces,layout,{responsive:true,displaylogo:false,scrollZoom:true});
+  Plotly.react("toolsChart",traces,layout,PLOT_CONFIG).then(()=>installCrossPanelHover("toolsChart"));
 }
 
 function tradeStoreKey(){ return `msci-world-trades-${instrumentKey()}`; }
@@ -118,11 +142,13 @@ function renderMetrics(strategy,buy,x){
 function renderAnalytics(){
   const points=filterRange(currentInstrument().intraday,analyticsRange), x=pointDates(points), y=pointPrices(points); if(!points.length)return;
   const returns=y.map((v,i)=>i?v/y[i-1]-1:0), buy=[],strategy=[],trades=renderTradeTable(); let b=100,s=100;
-  for(let i=0;i<points.length;i++){ b*=1+returns[i]; const active=trades.some(t=>points[i][0]>=new Date(t.entryDate).getTime()&&(!t.exitDate||points[i][0]<new Date(t.exitDate).getTime())); if(i&&active)s*=1+returns[i]; buy.push(b);strategy.push(s); }
-  const traces=[lineTrace(x,buy,"Buy & Hold","#0f172a"),lineTrace(x,strategy,"Meine Strategie","#7c3aed")];
-  for(const t of trades){ traces.push({x:[new Date(t.entryDate)],y:[buy[Math.max(0,points.findIndex(p=>p[0]>=new Date(t.entryDate).getTime()))]],type:"scatter",mode:"markers",name:`Entry ${t.id}`,showlegend:false,marker:{symbol:"triangle-up",size:12,color:"#16a34a"}}); if(t.exitDate)traces.push({x:[new Date(t.exitDate)],y:[buy[Math.max(0,points.findIndex(p=>p[0]>=new Date(t.exitDate).getTime()))]],type:"scatter",mode:"markers",name:`Exit ${t.id}`,showlegend:false,marker:{symbol:"triangle-down",size:12,color:"#dc2626"}}); }
+  const invested=[];for(let i=0;i<points.length;i++){ b*=1+returns[i]; const active=trades.some(t=>points[i][0]>=new Date(t.entryDate).getTime()&&(!t.exitDate||points[i][0]<new Date(t.exitDate).getTime())); invested.push(active);if(i&&active)s*=1+returns[i];buy.push(b);strategy.push(s); }
+  const traces=[{...lineTrace(x,buy,"Buy & Hold","#0f172a","solid",1,2.3),hovertemplate:"Buy & Hold: %{y:.2f}<extra></extra>"},{...lineTrace(x,strategy,"Meine Strategie","#7c3aed","solid",1,2.3),hovertemplate:"Meine Strategie: %{y:.2f}<extra></extra>"}];
+  for(const t of trades){ traces.push({x:[new Date(t.entryDate)],y:[buy[Math.max(0,points.findIndex(p=>p[0]>=new Date(t.entryDate).getTime()))]],type:"scatter",mode:"markers",name:`Einstieg ${t.id}`,showlegend:false,marker:{symbol:"triangle-up",size:12,color:"#16a34a",line:{width:1.3,color:"#fff"}},hovertemplate:`Einstieg · Trade ${t.id}<br>%{x|%d.%m.%Y}<extra></extra>`}); if(t.exitDate)traces.push({x:[new Date(t.exitDate)],y:[buy[Math.max(0,points.findIndex(p=>p[0]>=new Date(t.exitDate).getTime()))]],type:"scatter",mode:"markers",name:`Ausstieg ${t.id}`,showlegend:false,marker:{symbol:"triangle-down",size:12,color:"#dc2626",line:{width:1.3,color:"#fff"}},hovertemplate:`Ausstieg · Trade ${t.id}<br>%{x|%d.%m.%Y}<extra></extra>`}); }
   renderMetrics(strategy,buy,x);
-  Plotly.react("analyticsChart",traces,{...baseLayout(),xaxis:axisBase(),yaxis:{title:"Index 100",gridcolor:"#f1f5f9"}},{responsive:true,displaylogo:false,scrollZoom:true});
+  const shapes=[];let start=null;for(let i=0;i<invested.length;i++){if(invested[i]&&start===null)start=x[i];if(!invested[i]&&start!==null){shapes.push({type:"rect",xref:"x",yref:"paper",x0:start,x1:x[i],y0:0,y1:1,fillcolor:"rgba(22,163,74,.055)",line:{width:0},layer:"below"});start=null;}}if(start!==null)shapes.push({type:"rect",xref:"x",yref:"paper",x0:start,x1:x.at(-1),y0:0,y1:1,fillcolor:"rgba(22,163,74,.055)",line:{width:0},layer:"below"});
+  const layout={...baseLayout(),uirevision:`trading-analytics-${analyticsRange}`,showlegend:true,margin:{l:52,r:18,t:50,b:42},legend:{orientation:"h",x:0,y:1.08,xanchor:"left",yanchor:"bottom",font:{size:10},bgcolor:"rgba(255,255,255,0)"},xaxis:{...axisBase(),hoverformat:"%d.%m.%Y",rangeslider:{visible:false}},yaxis:{...axisBase(),zeroline:false,tickformat:".0f"},shapes};
+  Plotly.react("analyticsChart",traces,layout,{responsive:true,displaylogo:false});
 }
 function renderAll(){ if(!payload)return; const inst=currentInstrument(); $("instrumentMeta").textContent=`${inst.name} · ISIN ${inst.isin} · Yahoo ${inst.ticker}`; renderTools(); renderAnalytics(); history.replaceState(null,"",`?instrument=${encodeURIComponent(instrumentKey())}`); }
 function ranges(containerId,options,get,set){ const root=$(containerId); root.innerHTML=""; for(const [label,value] of options){ const b=document.createElement("button"); b.className=`range-button ${get()===value?"active":""}`; b.textContent=label;b.onclick=()=>{set(value);ranges(containerId,options,get,set);renderAll();};root.appendChild(b); } }
