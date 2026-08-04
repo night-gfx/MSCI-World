@@ -1,6 +1,6 @@
 # MSCI World Dashboard
 
-Dash-Anwendung zur Analyse eines gehebelten Amundi MSCI World ETF und eines langfristig verfügbaren iShares MSCI World ETF.
+Dash-Anwendung zur Analyse eines gehebelten Amundi MSCI World ETF, eines langfristig verfügbaren iShares MSCI World ETF und physisch hinterlegter europäischer CO₂-Emissionsberechtigungen über den SparkChange Physical Carbon EUA ETC.
 
 ## Start
 
