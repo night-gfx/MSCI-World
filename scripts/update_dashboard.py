@@ -22,6 +22,11 @@ INSTRUMENTS = {
         "ticker": "IQQW.DE",
         "isin": "IE00B0M62Q58",
     },
+    "co2_allowances": {
+        "name": "SparkChange Physical Carbon EUA ETC",
+        "ticker": "CO2.L",
+        "isin": "XS2353177293",
+    },
 }
 
 

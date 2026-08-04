@@ -43,6 +43,11 @@ INSTRUMENTS = {
         "isin": "IE00B0M62Q58",
         "ticker": "IQQW.DE",
     },
+    "co2_allowances": {
+        "name": "SparkChange Physical Carbon EUA ETC",
+        "isin": "XS2353177293",
+        "ticker": "CO2.L",
+    },
 }
 INTRADAY_INTERVAL = "5m"
 INTRADAY_PERIOD = "60d"
@@ -566,10 +571,26 @@ def load_last_price(
     config = instrument_config(instrument_key)
     quote = yf.Ticker(config["ticker"])
     price = pd.to_numeric(quote.fast_info.get("last_price"), errors="coerce")
-    if pd.isna(price) or not np.isfinite(float(price)) or float(price) <= 0:
-        raise RuntimeError(f"Yahoo Finance lieferte keinen Last Price für {config['ticker']}.")
-
     timestamp = pd.Timestamp.now(tz="Europe/Berlin").tz_localize(None)
+    if pd.isna(price) or not np.isfinite(float(price)) or float(price) <= 0:
+        fallback = _download_prices(
+            ticker=config["ticker"],
+            isin=config["isin"],
+            period="1d",
+            interval="1m",
+        )
+        if fallback.empty:
+            fallback = _download_prices(
+                ticker=config["ticker"],
+                isin=config["isin"],
+                period="5d",
+                interval="1d",
+            )
+        if fallback.empty:
+            raise RuntimeError(f"Yahoo Finance lieferte keinen Last Price für {config['ticker']}.")
+        latest = fallback.iloc[-1]
+        timestamp = pd.Timestamp(latest["Timestamp"])
+        price = float(latest["Adj Close"])
     cache.update(
         {
             "fetched_monotonic": time.monotonic(),
