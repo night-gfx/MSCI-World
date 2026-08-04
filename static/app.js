@@ -1,6 +1,7 @@
 const $ = id => document.getElementById(id);
 const PARAM_IDS = ["showRegression","regShort","regMedium","regLong","showBollinger","bollingerWindow","bollingerStd","showKalman","kalmanQ","kalmanR"];
 const RANGE_OPTIONS = [["1T","1d"],["5T","5d"],["1M","1m"],["2M","2m"],["MAX","max"]];
+const ANALYTICS_RANGE_OPTIONS = [["1J","1y"],["2J","2y"],["5J","5y"],["MAX","max"]];
 let payload, activeTab="tools", toolRange="1m", analyticsRange="max", selectedTrade=null;
 const saved = JSON.parse(localStorage.getItem("msci-world-defaults") || "{}");
 for (const id of PARAM_IDS) if (saved[id] !== undefined) $(id)[$(id).type === "checkbox" ? "checked" : "value"] = saved[id];
@@ -15,7 +16,7 @@ function fmt(value,digits=2){ return Number.isFinite(value) ? value.toLocaleStri
 function pct(value){ return Number.isFinite(value) ? `${fmt(value,2)} %` : "–"; }
 function filterRange(points, range){
   if (!points.length || range === "max") return points;
-  const days = range === "1d" ? 1 : range === "5d" ? 5 : range === "1m" ? 31 : 62;
+  const days = {"1d":1,"5d":5,"1m":31,"2m":62,"1y":365,"2y":730,"5y":1825}[range] || 62;
   const cutoff = points.at(-1)[0] - days * 86400000;
   return points.filter(p => p[0] >= cutoff);
 }
@@ -97,12 +98,22 @@ function tradeMetrics(t){ if(!t.exitDate||!Number.isFinite(t.exitPrice)) return 
 function renderTradeTable(){
   const trades=loadTrades().map(tradeMetrics), body=$("tradeRows"); body.innerHTML="";
   for(const t of trades){ const row=document.createElement("tr"); if(t.id===selectedTrade)row.className="selected"; row.innerHTML=`<td>${t.id}</td><td>${fmtDate(t.entryDate)}</td><td>${t.exitDate?fmtDate(t.exitDate):"–"}</td><td>${fmt(t.entryPrice,4)}</td><td>${fmt(t.exitPrice,4)}</td><td>${fmt(t.fees)}</td><td>${pct(t.netReturn)}</td>`; row.onclick=()=>{selectedTrade=t.id;renderTradeTable();}; body.appendChild(row); }
-  $("deleteTrade").disabled=!selectedTrade; renderMetrics(trades); return trades;
+  $("deleteTrade").disabled=!selectedTrade; return trades;
 }
-function renderMetrics(trades){
-  const closed=trades.filter(t=>Number.isFinite(t.netReturn)), wins=closed.filter(t=>t.netReturn>0), total=closed.reduce((s,t)=>s+t.netReturn,0), avg=closed.length?total/closed.length:NaN, hit=closed.length?wins.length/closed.length*100:NaN;
-  const rows=[["Geschlossene Trades",closed.length],["Offene Trades",trades.length-closed.length],["Trefferquote",pct(hit)],["Ø Netto-Rendite",pct(avg)],["Beste Rendite",pct(Math.max(...closed.map(t=>t.netReturn)))],["Schlechteste Rendite",pct(Math.min(...closed.map(t=>t.netReturn)))]];
-  $("metrics").innerHTML=rows.map(([label,value])=>`<div class="metric"><span>${label}</span><strong>${value}</strong></div>`).join("");
+function performanceStats(series,x){
+  if(series.length<2)return {total:NaN,annual:NaN,vol:NaN,sharpe:NaN,drawdown:NaN,returns:[]};
+  const returns=series.slice(1).map((v,i)=>v/series[i]-1), elapsed=Math.max(1,(x.at(-1)-x[0])/86400000), years=elapsed/365.25;
+  const total=series.at(-1)/series[0]-1, annual=(1+total)**(1/years)-1, mean=returns.reduce((a,b)=>a+b,0)/returns.length;
+  const variance=returns.reduce((a,b)=>a+(b-mean)**2,0)/Math.max(1,returns.length-1), periodsPerYear=returns.length/years, vol=Math.sqrt(variance*periodsPerYear);
+  let peak=series[0],drawdown=0;for(const value of series){peak=Math.max(peak,value);drawdown=Math.min(drawdown,value/peak-1);}
+  return {total,annual,vol,sharpe:vol?annual/vol:NaN,drawdown,returns};
+}
+function renderMetrics(strategy,buy,x){
+  const mine=performanceStats(strategy,x), benchmark=performanceStats(buy,x), active=mine.returns.map((v,i)=>v-benchmark.returns[i]);
+  const activeMean=active.reduce((a,b)=>a+b,0)/Math.max(1,active.length), activeVar=active.reduce((a,b)=>a+(b-activeMean)**2,0)/Math.max(1,active.length-1), years=Math.max(1/365.25,(x.at(-1)-x[0])/31557600000), tracking=Math.sqrt(activeVar*(active.length/years)), information=tracking?(mine.annual-benchmark.annual)/tracking:NaN;
+  const rows=[["Gesamtrendite",mine.total,benchmark.total,"pct"],["Annualisierte Rendite",mine.annual,benchmark.annual,"pct"],["Volatilität",mine.vol,benchmark.vol,"pct"],["Sharpe Ratio",mine.sharpe,benchmark.sharpe,"num"],["Max. Drawdown",mine.drawdown,benchmark.drawdown,"pct"],["Information Ratio",information,0,"num"]];
+  const value=(v,type)=>type==="pct"?pct(v*100):fmt(v,2), difference=(a,b,type)=>type==="pct"?pct((a-b)*100):fmt(a-b,2);
+  $("metrics").innerHTML=`<div class="evaluation-table"><div class="evaluation-row evaluation-header-row"><div>Kennzahl</div><div>Meine Strategie</div><div>Buy & Hold</div><div>Differenz</div></div>${rows.map(([label,a,b,type])=>`<div class="evaluation-row"><div>${label}</div><div>${value(a,type)}</div><div>${value(b,type)}</div><div class="${a-b>=0?"positive":"negative"}">${difference(a,b,type)}</div></div>`).join("")}</div>`;
 }
 function renderAnalytics(){
   const points=filterRange(currentInstrument().intraday,analyticsRange), x=pointDates(points), y=pointPrices(points); if(!points.length)return;
@@ -110,15 +121,16 @@ function renderAnalytics(){
   for(let i=0;i<points.length;i++){ b*=1+returns[i]; const active=trades.some(t=>points[i][0]>=new Date(t.entryDate).getTime()&&(!t.exitDate||points[i][0]<new Date(t.exitDate).getTime())); if(i&&active)s*=1+returns[i]; buy.push(b);strategy.push(s); }
   const traces=[lineTrace(x,buy,"Buy & Hold","#0f172a"),lineTrace(x,strategy,"Meine Strategie","#7c3aed")];
   for(const t of trades){ traces.push({x:[new Date(t.entryDate)],y:[buy[Math.max(0,points.findIndex(p=>p[0]>=new Date(t.entryDate).getTime()))]],type:"scatter",mode:"markers",name:`Entry ${t.id}`,showlegend:false,marker:{symbol:"triangle-up",size:12,color:"#16a34a"}}); if(t.exitDate)traces.push({x:[new Date(t.exitDate)],y:[buy[Math.max(0,points.findIndex(p=>p[0]>=new Date(t.exitDate).getTime()))]],type:"scatter",mode:"markers",name:`Exit ${t.id}`,showlegend:false,marker:{symbol:"triangle-down",size:12,color:"#dc2626"}}); }
+  renderMetrics(strategy,buy,x);
   Plotly.react("analyticsChart",traces,{...baseLayout(),xaxis:axisBase(),yaxis:{title:"Index 100",gridcolor:"#f1f5f9"}},{responsive:true,displaylogo:false,scrollZoom:true});
 }
 function renderAll(){ if(!payload)return; const inst=currentInstrument(); $("instrumentMeta").textContent=`${inst.name} · ISIN ${inst.isin} · Yahoo ${inst.ticker}`; renderTools(); renderAnalytics(); history.replaceState(null,"",`?instrument=${encodeURIComponent(instrumentKey())}`); }
-function ranges(containerId,get,set){ const root=$(containerId); root.innerHTML=""; for(const [label,value] of RANGE_OPTIONS){ const b=document.createElement("button"); b.className=`range-button ${get()===value?"active":""}`; b.textContent=label;b.onclick=()=>{set(value);ranges(containerId,get,set);renderAll();};root.appendChild(b); } }
-function configureRanges(){ ranges("toolRanges",()=>toolRange,v=>toolRange=v); ranges("analyticsRanges",()=>analyticsRange,v=>analyticsRange=v); }
+function ranges(containerId,options,get,set){ const root=$(containerId); root.innerHTML=""; for(const [label,value] of options){ const b=document.createElement("button"); b.className=`range-button ${get()===value?"active":""}`; b.textContent=label;b.onclick=()=>{set(value);ranges(containerId,options,get,set);renderAll();};root.appendChild(b); } }
+function configureRanges(){ ranges("toolRanges",RANGE_OPTIONS,()=>toolRange,v=>toolRange=v); ranges("analyticsRanges",ANALYTICS_RANGE_OPTIONS,()=>analyticsRange,v=>analyticsRange=v); }
 async function fetchData(){ $("reload").disabled=true; try{ const response=await fetch(`data/dashboard.json?v=${Date.now()}`);if(!response.ok)throw Error(response.status);payload=await response.json();localStorage.setItem("msci-world-last-data",JSON.stringify(payload));$("notice").style.display="none";initializeInstrument();$("updated").textContent=`Stand ${new Date(payload.updated_at).toLocaleString("de-DE")} · automatische Aktualisierung stündlich`;renderAll();}catch(error){const cached=localStorage.getItem("msci-world-last-data");if(cached){payload=JSON.parse(cached);initializeInstrument();$("notice").textContent="Offline: letzter gespeicherter Datenstand wird angezeigt.";$("notice").style.display="block";renderAll();}else{$("notice").textContent=`Daten konnten nicht geladen werden (${error.message}).`;$('notice').style.display="block";}}finally{$("reload").disabled=false;}}
 function initializeInstrument(){ const old=instrumentKey(), requested=new URLSearchParams(location.search).get("instrument"), select=$("instrument");select.innerHTML="";for(const[key,inst]of Object.entries(payload.instruments)){const option=document.createElement("option");option.value=key;option.textContent=inst.name;select.appendChild(option);}select.value=payload.instruments[old]?old:payload.instruments[requested]?requested:Object.keys(payload.instruments)[0]; }
 
-$("instrument").onchange=()=>{selectedTrade=null;renderAll();}; $("reload").onclick=fetchData;
+$("instrument").onchange=()=>{selectedTrade=null;renderAll();}; $("reload").onclick=()=>{if(confirm("Kursdaten jetzt neu laden?"))fetchData();};
 for(const id of PARAM_IDS) $(id).addEventListener("input",renderTools);
 $("saveDefaults").onclick=()=>{ const values={};for(const id of PARAM_IDS)values[id]=$(id).type==="checkbox"?$(id).checked:$(id).value;localStorage.setItem("msci-world-defaults",JSON.stringify(values));$("settingsMessage").textContent="Standardparameter wurden im Browser gespeichert.";};
 document.querySelectorAll(".tab").forEach(button=>button.onclick=()=>{activeTab=button.dataset.tab;document.querySelectorAll(".tab").forEach(b=>b.classList.toggle("active",b===button));$("toolsTab").classList.toggle("hidden",activeTab!=="tools");$("analyticsTab").classList.toggle("hidden",activeTab!=="analytics");setTimeout(()=>Plotly.Plots.resize(activeTab==="tools"?"toolsChart":"analyticsChart"),0);});
