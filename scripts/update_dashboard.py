@@ -58,6 +58,25 @@ def merge_points(old: list, fresh: list) -> list:
     return [by_timestamp[key] for key in sorted(by_timestamp)]
 
 
+def latest_quote(ticker: str, daily: list) -> list[float | int]:
+    """Return Yahoo's current quote separately from the append-only daily history."""
+    try:
+        price = pd.to_numeric(yf.Ticker(ticker).fast_info.get("last_price"), errors="coerce")
+        if pd.notna(price) and float(price) > 0:
+            return [int(datetime.now(timezone.utc).timestamp() * 1000), round(float(price), 6)]
+    except Exception as exc:
+        print(f"Last Price fallback for {ticker}: {exc}")
+    try:
+        one_minute = download(ticker, "1d", "1m")
+        if one_minute:
+            return one_minute[-1]
+    except Exception as exc:
+        print(f"1-minute Last Price fallback for {ticker}: {exc}")
+    if not daily:
+        raise RuntimeError(f"No Last Price available for {ticker}")
+    return [int(daily[-1][0]), float(daily[-1][1])]
+
+
 def main() -> None:
     previous = {}
     if OUTPUT.exists():
@@ -72,7 +91,12 @@ def main() -> None:
         old = previous_instruments.get(key, {})
         daily = merge_points(old.get("daily", []), download(config["ticker"], "max", "1d"))
         intraday = merge_points(old.get("intraday", []), download(config["ticker"], "60d", "5m"))
-        result["instruments"][key] = {**config, "daily": daily, "intraday": intraday}
+        result["instruments"][key] = {
+            **config,
+            "daily": daily,
+            "intraday": intraday,
+            "last_price": latest_quote(config["ticker"], daily),
+        }
 
     OUTPUT.parent.mkdir(parents=True, exist_ok=True)
     OUTPUT.write_text(json.dumps(result, separators=(",", ":")), encoding="utf-8")
