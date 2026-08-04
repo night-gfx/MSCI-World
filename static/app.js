@@ -88,6 +88,31 @@ function installCrossPanelHover(graphId){
   graph.__msciHoverHandler=event=>{const point=event?.points?.[0],size=graph._fullLayout?._size;if(!point?.xaxis||!size){line.style.display="none";return;}line.style.left=`${point.xaxis.d2p(point.x)+point.xaxis._offset}px`;line.style.top=`${size.t}px`;line.style.height=`${size.h}px`;line.style.display="block";};
   graph.__msciUnhoverHandler=()=>{line.style.display="none";};graph.on("plotly_hover",graph.__msciHoverHandler);graph.on("plotly_unhover",graph.__msciUnhoverHandler);
 }
+function installVisibleYAutoscale(graphId){
+  const graph=$(graphId)?.querySelector(".js-plotly-plot");if(!graph||!graph._fullLayout||typeof graph.on!=="function")return;
+  if(graph.__msciRelayoutHandler&&typeof graph.removeListener==="function")graph.removeListener("plotly_relayout",graph.__msciRelayoutHandler);
+  graph.__msciRelayoutHandler=event=>{
+    const rangeEntry=Object.entries(event||{}).find(([key,value])=>/^xaxis\d*\.range$/.test(key)&&Array.isArray(value));
+    const startEntry=Object.entries(event||{}).find(([key])=>/^xaxis\d*\.range\[0\]$/.test(key));
+    const reset=Object.entries(event||{}).some(([key,value])=>/^xaxis\d*\.autorange$/.test(key)&&value===true);
+    let start=-Infinity,end=Infinity;
+    if(rangeEntry){start=new Date(rangeEntry[1][0]).getTime();end=new Date(rangeEntry[1][1]).getTime();}
+    else if(startEntry){const axis=startEntry[0].replace(/\.range\[0\]$/,"");start=new Date(startEntry[1]).getTime();end=new Date(event[`${axis}.range[1]`]).getTime();}
+    else if(!reset)return;
+    if(!Number.isFinite(start)&&start!==-Infinity)return;if(!Number.isFinite(end)&&end!==Infinity)return;
+    const updates={};
+    for(const axisName of Object.keys(graph._fullLayout).filter(key=>/^yaxis\d*$/.test(key))){
+      const suffix=axisName.slice(5),traceAxis=suffix?`y${suffix}`:"y",values=[];
+      for(const trace of graph.data){
+        if((trace.yaxis||"y")!==traceAxis||!Array.isArray(trace.x)||!Array.isArray(trace.y))continue;
+        trace.y.forEach((value,index)=>{const timestamp=new Date(trace.x[index]).getTime(),numeric=+value;if(Number.isFinite(timestamp)&&timestamp>=start&&timestamp<=end&&Number.isFinite(numeric))values.push(numeric);});
+      }
+      const range=paddedRange([values],graphId==="toolsChart"&&axisName!=="yaxis");if(range)updates[`${axisName}.range`]=range;
+    }
+    if(Object.keys(updates).length)Plotly.relayout(graph,updates);
+  };
+  graph.on("plotly_relayout",graph.__msciRelayoutHandler);
+}
 const PLOT_CONFIG={responsive:true,displaylogo:false,modeBarButtonsToAdd:["drawline","drawopenpath","eraseshape","resetScale2d"]};
 function toolsPoints(){const inst=currentInstrument(),points=[...inst.daily];if(inst.last_price&&Number.isFinite(+inst.last_price[1])){points.push([+inst.last_price[0],+inst.last_price[1]]);}const unique=new Map(points.map(p=>[+p[0],[+p[0],+p[1]]]));return [...unique.values()].sort((a,b)=>a[0]-b[0]);}
 
@@ -129,7 +154,7 @@ function renderTools(){
     if(panel.bar){ traces.push({x,y:panel.bar,type:"bar",name:panel.label,showlegend:false,marker:{color:panel.bar.map(v=>v>=0?"#16a34a":"#dc2626")},xaxis:`x${axis}`,yaxis:`y${axis}`,hovertemplate:"Steigung zum Vortag: %{y:.4f}<extra></extra>"}); }
     else panel.series.forEach((series,i)=>traces.push(...splitSigned(x,series,axis,panel.series.length>1?(i?"Kurs - Lower Band":"Kurs - Upper Band"):panel.label)));
   });
-  Plotly.react("toolsChart",traces,layout,PLOT_CONFIG).then(()=>installCrossPanelHover("toolsChart"));
+  Plotly.react("toolsChart",traces,layout,PLOT_CONFIG).then(()=>{installCrossPanelHover("toolsChart");installVisibleYAutoscale("toolsChart");});
 }
 
 function tradeStoreKey(){ return `msci-world-trades-${instrumentKey()}`; }
@@ -167,7 +192,7 @@ function renderAnalytics(){
   renderMetrics(comparison.map(r=>r.strategy).filter(Number.isFinite),comparison.map(r=>r.buy),comparison.map(r=>new Date(r.timestamp)),trades.length>0);
   const shapes=[];let start=null;for(let i=0;i<invested.length;i++){if(invested[i]&&start===null)start=x[i];if(!invested[i]&&start!==null){shapes.push({type:"rect",xref:"x",yref:"paper",x0:start,x1:x[i],y0:0,y1:1,fillcolor:"rgba(22,163,74,.055)",line:{width:0},layer:"below"});start=null;}}if(start!==null)shapes.push({type:"rect",xref:"x",yref:"paper",x0:start,x1:x.at(-1),y0:0,y1:1,fillcolor:"rgba(22,163,74,.055)",line:{width:0},layer:"below"});
   const layout={...baseLayout(),uirevision:`trading-analytics-${analyticsRange}`,showlegend:true,margin:{l:52,r:18,t:50,b:42},legend:{orientation:"h",x:0,y:1.08,xanchor:"left",yanchor:"bottom",font:{size:10},bgcolor:"rgba(255,255,255,0)"},xaxis:{...axisBase(currentInstrument().intraday),range:xRange,hoverformat:"%d.%m.%Y",rangeslider:{visible:false}},yaxis:{...axisBase(),range:paddedRange([buy,strategy]),zeroline:false,tickformat:".0f"},shapes};
-  Plotly.react("analyticsChart",traces,layout,{responsive:true,displaylogo:false});
+  Plotly.react("analyticsChart",traces,layout,{responsive:true,displaylogo:false}).then(()=>installVisibleYAutoscale("analyticsChart"));
 }
 function renderAll(){ if(!payload)return; const inst=currentInstrument(); $("instrumentMeta").textContent=`${inst.name} · ISIN ${inst.isin} · Yahoo ${inst.ticker} · Trading Tools: Tagesdaten (MAX, Adj Close) · Trading Analytics: 5-Minuten-Daten`; renderTools(); renderAnalytics(); history.replaceState(null,"",`?instrument=${encodeURIComponent(instrumentKey())}`); }
 function ranges(containerId,options,get,set){ const root=$(containerId); root.innerHTML=""; for(const [label,value] of options){ const b=document.createElement("button"); b.className=`range-button ${get()===value?"active":""}`; b.textContent=label;b.onclick=()=>{set(value);ranges(containerId,options,get,set);renderAll();};root.appendChild(b); } }
