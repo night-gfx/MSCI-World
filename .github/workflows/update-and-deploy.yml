@@ -6,6 +6,7 @@ on:
     branches: [main]
     paths:
       - "index.html"
+      - "static/**"
       - "requirements.txt"
       - "scripts/**"
       - ".github/workflows/**"
