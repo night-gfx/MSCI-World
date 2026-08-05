@@ -110,6 +110,8 @@ function installVisibleYAutoscale(graphId){
   const graph=$(graphId)?.querySelector(".js-plotly-plot");if(!graph||!graph._fullLayout||typeof graph.on!=="function")return;
   if(graph.__msciRelayoutHandler&&typeof graph.removeListener==="function")graph.removeListener("plotly_relayout",graph.__msciRelayoutHandler);
   graph.__msciRelayoutHandler=event=>{
+    if(!Object.keys(event||{}).some(key=>/^xaxis\d*\.(range|range\[[01]\]|autorange)$/.test(key)))return;
+    clearTimeout(graph.__msciAutoscaleTimer);graph.__msciAutoscaleTimer=setTimeout(()=>{
     const rangeEntry=Object.entries(event||{}).find(([key,value])=>/^xaxis\d*\.range$/.test(key)&&Array.isArray(value));
     const startEntry=Object.entries(event||{}).find(([key])=>/^xaxis\d*\.range\[0\]$/.test(key));
     const reset=Object.entries(event||{}).some(([key,value])=>/^xaxis\d*\.autorange$/.test(key)&&value===true);
@@ -129,6 +131,7 @@ function installVisibleYAutoscale(graphId){
       const symmetricCenter=graph.__msciSymmetricCenters?.[axisName],range=Number.isFinite(symmetricCenter)?symmetricPriceRange([values],symmetricCenter):paddedRange([values],graphId==="toolsChart"&&axisName!=="yaxis");if(range)updates[`${axisName}.range`]=range;
     }
     if(Object.keys(updates).length)Plotly.relayout(graph,updates);
+    },80);
   };
   graph.on("plotly_relayout",graph.__msciRelayoutHandler);
 }
