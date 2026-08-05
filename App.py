@@ -1561,7 +1561,7 @@ def build_figure(
                     x=positive_x,
                     y=positive_y,
                     mode="lines",
-                    line={"width": 1.9, "color": "#16a34a"},
+                    line={"width": 1.9, "color": "#16a34a", "simplify": False},
                     fill="tozeroy",
                     fillcolor="rgba(22, 163, 74, 0.11)",
                     name=f"{label} positiv",
@@ -1578,7 +1578,7 @@ def build_figure(
                     x=negative_x,
                     y=negative_y,
                     mode="lines",
-                    line={"width": 1.9, "color": "#dc2626"},
+                    line={"width": 1.9, "color": "#dc2626", "simplify": False},
                     fill="tozeroy",
                     fillcolor="rgba(220, 38, 38, 0.10)",
                     name=f"{label} negativ",
@@ -1860,13 +1860,18 @@ def visible_range_from_control(
     data_start = pd.Timestamp(market_df["Date"].min())
     data_end = pd.Timestamp(market_df["Date"].max())
     offsets = {
-        "1d": pd.Timedelta(days=1),
-        "5d": pd.Timedelta(days=5),
-        "1m": pd.DateOffset(months=1),
-        "2m": pd.DateOffset(months=2),
+        "6m": pd.DateOffset(months=6),
+        "1y": pd.DateOffset(years=1),
+        "2y": pd.DateOffset(years=2),
+        "5y": pd.DateOffset(years=5),
     }
     if selection in offsets:
-        return max(data_start, data_end - offsets[selection]), data_end
+        cutoff = max(data_start, data_end - offsets[selection])
+        visible_dates = market_df.loc[market_df["Date"] >= cutoff, "Date"]
+        snapped_start = (
+            pd.Timestamp(visible_dates.min()) if not visible_dates.empty else cutoff
+        )
+        return snapped_start, data_end
     return None
 
 
@@ -1957,13 +1962,13 @@ app.layout = html.Div(
                                         dcc.RadioItems(
                                             id="time-range-selector",
                                             options=[
-                                                {"label": "1T", "value": "1d"},
-                                                {"label": "5T", "value": "5d"},
-                                                {"label": "1M", "value": "1m"},
-                                                {"label": "2M", "value": "2m"},
-                                                {"label": "MAX", "value": "max"},
+                                                {"label": "6 Monate", "value": "6m"},
+                                                {"label": "1 Jahr", "value": "1y"},
+                                                {"label": "2 Jahre", "value": "2y"},
+                                                {"label": "5 Jahre", "value": "5y"},
+                                                {"label": "Max", "value": "max"},
                                             ],
-                                            value="1m",
+                                            value="6m",
                                             inline=True,
                                             className="time-range-buttons",
                                         ),
@@ -2161,10 +2166,11 @@ app.layout = html.Div(
                                                 dcc.RadioItems(
                                                     id="analytics-time-range",
                                                     options=[
-                                                        {"label": "1J", "value": "1y"},
-                                                        {"label": "2J", "value": "2y"},
-                                                        {"label": "5J", "value": "5y"},
-                                                        {"label": "MAX", "value": "max"},
+                                                        {"label": "6 Monate", "value": "6m"},
+                                                        {"label": "1 Jahr", "value": "1y"},
+                                                        {"label": "2 Jahre", "value": "2y"},
+                                                        {"label": "5 Jahre", "value": "5y"},
+                                                        {"label": "Max", "value": "max"},
                                                     ],
                                                     value="max",
                                                     inline=True,
@@ -2573,7 +2579,7 @@ app.index_string = """
             }
             .analytics-time-range {
                 display: grid;
-                grid-template-columns: repeat(4, 38px);
+                grid-template-columns: repeat(5, minmax(72px, 1fr));
                 gap: 3px;
                 padding: 3px;
                 border: 1px solid rgba(148, 163, 184, 0.28);
@@ -2885,9 +2891,10 @@ app.index_string = """
             }
             .time-range-buttons {
                 display: grid;
-                grid-template-columns: repeat(5, minmax(42px, 1fr));
+                grid-template-columns: repeat(5, minmax(0, 1fr));
                 grid-auto-rows: 34px;
                 gap: 4px;
+                width: min(520px, calc(100vw - 40px));
                 min-width: 0;
                 margin: 0;
                 padding: 0;
@@ -3183,7 +3190,7 @@ app.index_string = """
                     top: 10px;
                 }
                 .time-range-buttons {
-                    grid-template-columns: repeat(5, minmax(40px, 1fr));
+                    grid-template-columns: repeat(5, minmax(0, 1fr));
                 }
             }
             @media (max-width: 680px) {
@@ -3232,6 +3239,9 @@ app.clientside_callback(
             if (graph.__msciHoverHandler && typeof graph.removeListener === "function") {
                 graph.removeListener("plotly_hover", graph.__msciHoverHandler);
                 graph.removeListener("plotly_unhover", graph.__msciUnhoverHandler);
+                if (graph.__msciClickHandler) {
+                    graph.removeListener("plotly_click", graph.__msciClickHandler);
+                }
             }
 
             let line = graph.querySelector(".cross-panel-hover-line");
@@ -3249,24 +3259,37 @@ app.clientside_callback(
                 graph.appendChild(line);
             }
 
-            graph.__msciHoverHandler = function(eventData) {
+            const positionLine = function(eventData) {
                 const point = eventData && eventData.points && eventData.points[0];
                 const size = graph._fullLayout && graph._fullLayout._size;
                 if (!point || !point.xaxis || !size) {
-                    line.style.display = "none";
-                    return;
+                    return false;
                 }
                 const xPixel = point.xaxis.d2p(point.x) + point.xaxis._offset;
                 line.style.left = xPixel + "px";
                 line.style.top = size.t + "px";
                 line.style.height = size.h + "px";
                 line.style.display = "block";
+                return true;
+            };
+            graph.__msciHoverHandler = function(eventData) {
+                if (!positionLine(eventData) && line.dataset.pinned !== "true") {
+                    line.style.display = "none";
+                }
             };
             graph.__msciUnhoverHandler = function() {
-                line.style.display = "none";
+                if (line.dataset.pinned !== "true") {
+                    line.style.display = "none";
+                }
+            };
+            graph.__msciClickHandler = function(eventData) {
+                if (positionLine(eventData)) {
+                    line.dataset.pinned = line.dataset.pinned === "true" ? "false" : "true";
+                }
             };
             graph.on("plotly_hover", graph.__msciHoverHandler);
             graph.on("plotly_unhover", graph.__msciUnhoverHandler);
+            graph.on("plotly_click", graph.__msciClickHandler);
         }, 0);
         return Date.now();
     }
@@ -3505,6 +3528,7 @@ def build_trade_analytics_figure(
         pd.Timestamp(comparison["Date"].min()) if not comparison.empty else market_start
     )
     offsets = {
+        "6m": pd.DateOffset(months=6),
         "1y": pd.DateOffset(years=1),
         "2y": pd.DateOffset(years=2),
         "5y": pd.DateOffset(years=5),
@@ -3517,6 +3541,8 @@ def build_trade_analytics_figure(
     visible_comparison = comparison[
         (comparison["Date"] >= data_start) & (comparison["Date"] <= data_end)
     ]
+    if not visible_comparison.empty:
+        data_start = pd.Timestamp(visible_comparison["Date"].min())
 
     figure = go.Figure()
     if not visible_comparison.empty:

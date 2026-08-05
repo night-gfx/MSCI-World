@@ -1,8 +1,8 @@
 const $ = id => document.getElementById(id);
 const PARAM_IDS = ["showRegression","regShort","regMedium","regLong","showBollinger","bollingerWindow","bollingerStd","showKalman","kalmanQ","kalmanR"];
-const RANGE_OPTIONS = [["1T","1d"],["5T","5d"],["1M","1m"],["2M","2m"],["MAX","max"]];
-const ANALYTICS_RANGE_OPTIONS = [["1J","1y"],["2J","2y"],["5J","5y"],["MAX","max"]];
-let payload, activeTab="tools", toolRange="1m", analyticsRange="max", selectedTrade=null;
+const RANGE_OPTIONS = [["6 Monate","6m"],["1 Jahr","1y"],["2 Jahre","2y"],["5 Jahre","5y"],["Max","max"]];
+const ANALYTICS_RANGE_OPTIONS = RANGE_OPTIONS;
+let payload, activeTab="tools", toolRange="6m", analyticsRange="max", selectedTrade=null;
 const saved = JSON.parse(localStorage.getItem("msci-world-defaults") || "{}");
 for (const id of PARAM_IDS) if (saved[id] !== undefined) $(id)[$(id).type === "checkbox" ? "checked" : "value"] = saved[id];
 
@@ -14,7 +14,7 @@ function dateKey(value){ return new Date(value).toISOString().slice(0,10); }
 function fmtDate(value){ return new Date(value).toLocaleDateString("de-DE"); }
 function fmt(value,digits=2){ return Number.isFinite(value) ? value.toLocaleString("de-DE",{minimumFractionDigits:digits,maximumFractionDigits:digits}) : "–"; }
 function pct(value){ return Number.isFinite(value) ? `${fmt(value,2)} %` : "–"; }
-function rangeStart(timestamp,range){const date=new Date(timestamp);if(range==="1d")return timestamp-86400000;if(range==="5d")return timestamp-5*86400000;if(range==="1m")date.setUTCMonth(date.getUTCMonth()-1);else if(range==="2m")date.setUTCMonth(date.getUTCMonth()-2);else if(range==="1y")date.setUTCFullYear(date.getUTCFullYear()-1);else if(range==="2y")date.setUTCFullYear(date.getUTCFullYear()-2);else if(range==="5y")date.setUTCFullYear(date.getUTCFullYear()-5);else return -Infinity;return date.getTime();}
+function rangeStart(timestamp,range){const date=new Date(timestamp);if(range==="6m")date.setUTCMonth(date.getUTCMonth()-6);else if(range==="1y")date.setUTCFullYear(date.getUTCFullYear()-1);else if(range==="2y")date.setUTCFullYear(date.getUTCFullYear()-2);else if(range==="5y")date.setUTCFullYear(date.getUTCFullYear()-5);else return -Infinity;return date.getTime();}
 function filterRange(points, range){
   if (!points.length || range === "max") return points;
   const cutoff = rangeStart(points.at(-1)[0],range);
@@ -64,14 +64,14 @@ function tradingBreaks(points){
 function paddedRange(values,includeZero=false){const finite=values.flat().filter(Number.isFinite);if(!finite.length)return undefined;const lo=Math.min(...finite),hi=Math.max(...finite);if(includeZero){const limit=Math.max(Math.abs(lo),Math.abs(hi));return limit>0?[-limit*1.07,limit*1.07]:[-1,1];}const pad=hi===lo?Math.max(Math.abs(hi)*.05,1):(hi-lo)*.07;return [lo-pad,hi+pad];}
 function axisBase(points=[]){ return {rangebreaks:tradingBreaks(points),showgrid:false,showline:false,ticks:"",tickfont:{size:10,color:"#64748b"},automargin:true}; }
 function baseLayout(){ return {paper_bgcolor:"#fff",plot_bgcolor:"#fff",font:{family:"Arial, sans-serif",color:"#0f172a"},hovermode:"x unified",hoverdistance:-1,hoverlabel:{bgcolor:"#0f172a",bordercolor:"#0f172a",font:{color:"#fff",size:12}}}; }
-function lineTrace(x,y,name,color,dash="solid",axis=1,width=2){ return {x,y,type:"scatter",mode:"lines",name,line:{color,width,dash},xaxis:axis===1?"x":`x${axis}`,yaxis:axis===1?"y":`y${axis}`,connectgaps:false}; }
+function lineTrace(x,y,name,color,dash="solid",axis=1,width=2){ return {x,y,type:"scatter",mode:"lines",name,line:{color,width,dash,simplify:false},xaxis:axis===1?"x":`x${axis}`,yaxis:axis===1?"y":`y${axis}`,connectgaps:false}; }
 function splitSigned(x,y,axis,name){
   const positiveX=[],positiveY=[],negativeX=[],negativeY=[];let previous=null,previousSign=null;
   const append=(xs,ys,xv,yv)=>{if(xs.at(-1)?.getTime?.()===xv?.getTime?.())ys[ys.length-1]=yv;else{xs.push(xv);ys.push(yv);}},close=(xs,ys)=>{if(xs.length&&xs.at(-1)!==null){xs.push(null);ys.push(null);}};
   for(let i=0;i<y.length;i++){const value=y[i];if(!Number.isFinite(value)){close(positiveX,positiveY);close(negativeX,negativeY);previous=null;previousSign=null;continue;}const sign=value>0?1:value<0?-1:(previousSign||1);if(!previous){const [xs,ys]=sign>0?[positiveX,positiveY]:[negativeX,negativeY];append(xs,ys,x[i],value);}else if(sign===previousSign){const [xs,ys]=sign>0?[positiveX,positiveY]:[negativeX,negativeY];append(xs,ys,x[i],value);}else{const fraction=Math.abs(previous.value)/(Math.abs(previous.value)+Math.abs(value)),crossing=new Date(previous.x.getTime()+(x[i].getTime()-previous.x.getTime())*fraction),[oldX,oldY]=previousSign>0?[positiveX,positiveY]:[negativeX,negativeY],[newX,newY]=sign>0?[positiveX,positiveY]:[negativeX,negativeY];append(oldX,oldY,crossing,0);close(oldX,oldY);append(newX,newY,crossing,0);append(newX,newY,x[i],value);}previous={x:x[i],value};previousSign=sign;}
   return [
-    {...lineTrace(positiveX,positiveY,`${name} positiv`,"#16a34a","solid",axis,1.9),mode:"lines+markers",marker:{size:3.5,color:"#16a34a",opacity:.58},showlegend:false,hoverinfo:"none",fill:"tozeroy",fillcolor:"rgba(22,163,74,.11)"},
-    {...lineTrace(negativeX,negativeY,`${name} negativ`,"#dc2626","solid",axis,1.9),mode:"lines+markers",marker:{size:3.5,color:"#dc2626",opacity:.58},showlegend:false,hoverinfo:"none",fill:"tozeroy",fillcolor:"rgba(220,38,38,.10)"}
+    {...lineTrace(positiveX,positiveY,`${name} positiv`,"#16a34a","solid",axis,1.9),showlegend:false,hoverinfo:"none",fill:"tozeroy",fillcolor:"rgba(22,163,74,.11)"},
+    {...lineTrace(negativeX,negativeY,`${name} negativ`,"#dc2626","solid",axis,1.9),showlegend:false,hoverinfo:"none",fill:"tozeroy",fillcolor:"rgba(220,38,38,.10)"}
   ];
 }
 function splitTrend(x,y,name){
@@ -83,10 +83,13 @@ function splitTrend(x,y,name){
 }
 function installCrossPanelHover(graphId){
   const graph=$(graphId)?.querySelector(".js-plotly-plot"); if(!graph||!graph._fullLayout||typeof graph.on!=="function")return;
-  if(graph.__msciHoverHandler&&typeof graph.removeListener==="function"){graph.removeListener("plotly_hover",graph.__msciHoverHandler);graph.removeListener("plotly_unhover",graph.__msciUnhoverHandler);}
+  if(graph.__msciHoverHandler&&typeof graph.removeListener==="function"){graph.removeListener("plotly_hover",graph.__msciHoverHandler);graph.removeListener("plotly_unhover",graph.__msciUnhoverHandler);if(graph.__msciClickHandler)graph.removeListener("plotly_click",graph.__msciClickHandler);}
   let line=graph.querySelector(".cross-panel-hover-line");if(!line){line=document.createElement("div");line.className="cross-panel-hover-line";graph.appendChild(line);}
-  graph.__msciHoverHandler=event=>{const point=event?.points?.[0],size=graph._fullLayout?._size;if(!point?.xaxis||!size){line.style.display="none";return;}line.style.left=`${point.xaxis.d2p(point.x)+point.xaxis._offset}px`;line.style.top=`${size.t}px`;line.style.height=`${size.h}px`;line.style.display="block";};
-  graph.__msciUnhoverHandler=()=>{line.style.display="none";};graph.on("plotly_hover",graph.__msciHoverHandler);graph.on("plotly_unhover",graph.__msciUnhoverHandler);
+  const position=event=>{const point=event?.points?.[0],size=graph._fullLayout?._size;if(!point?.xaxis||!size)return false;line.style.left=`${point.xaxis.d2p(point.x)+point.xaxis._offset}px`;line.style.top=`${size.t}px`;line.style.height=`${size.h}px`;line.style.display="block";return true;};
+  graph.__msciHoverHandler=event=>{if(!position(event)&&line.dataset.pinned!=="true")line.style.display="none";};
+  graph.__msciUnhoverHandler=()=>{if(line.dataset.pinned!=="true")line.style.display="none";};
+  graph.__msciClickHandler=event=>{if(position(event))line.dataset.pinned=line.dataset.pinned==="true"?"false":"true";};
+  graph.on("plotly_hover",graph.__msciHoverHandler);graph.on("plotly_unhover",graph.__msciUnhoverHandler);graph.on("plotly_click",graph.__msciClickHandler);
 }
 function installVisibleYAutoscale(graphId){
   const graph=$(graphId)?.querySelector(".js-plotly-plot");if(!graph||!graph._fullLayout||typeof graph.on!=="function")return;
@@ -117,7 +120,7 @@ const PLOT_CONFIG={responsive:true,displaylogo:false,modeBarButtonsToAdd:["drawl
 function toolsPoints(){const inst=currentInstrument(),byDay=new Map();for(const point of inst.daily){const day=dateKey(point[0]);byDay.set(day,[Date.parse(`${day}T00:00:00Z`),+point[1]]);}if(inst.last_price&&Number.isFinite(+inst.last_price[1])){const day=dateKey(inst.last_price[0]);byDay.set(day,[Date.parse(`${day}T00:00:00Z`),+inst.last_price[1]]);}return [...byDay.values()].sort((a,b)=>a[0]-b[0]);}
 
 function renderTools(){
-  const fullPoints=toolsPoints(),fullY=pointPrices(fullPoints),points=filterRange(fullPoints,toolRange),startIndex=fullPoints.findIndex(p=>p[0]===points[0][0]),x=pointDates(points),y=pointPrices(points),xRange=[new Date(Math.max(fullPoints[0][0],rangeStart(fullPoints.at(-1)[0],toolRange))),new Date(fullPoints.at(-1)[0])];
+  const fullPoints=toolsPoints(),fullY=pointPrices(fullPoints),points=filterRange(fullPoints,toolRange),startIndex=fullPoints.findIndex(p=>p[0]===points[0][0]),x=pointDates(points),y=pointPrices(points),xRange=[new Date(points[0][0]),new Date(points.at(-1)[0])];
   const traces=[{...lineTrace(x,y,currentInstrument().name,"#0f172a","solid",1,2.5),hovertemplate:`${currentInstrument().name}: %{y:.4f}<extra></extra>`}], panels=[];
   if($("showBollinger").checked){
     const fullBands=rolling(fullY,Math.max(2,+$("bollingerWindow").value||20),Math.max(.1,+$("bollingerStd").value||2)),bands={mid:fullBands.mid.slice(startIndex),upper:fullBands.upper.slice(startIndex),lower:fullBands.lower.slice(startIndex)};
@@ -187,7 +190,7 @@ function renderMetrics(strategy,buy,x,hasTrades){
 function evaluationMarkup(rows){return `<div class="evaluation-table"><div class="evaluation-row evaluation-header-row"><div>Kennzahl</div><div>Meine Strategie</div><div>Buy & Hold</div><div>Differenz</div></div>${rows.map(row=>`<div class="evaluation-row">${row.map(value=>`<div>${value}</div>`).join("")}</div>`).join("")}</div>`;}
 function buildComparison(points,trades){if(!points.length)return [];const valid=trades.filter(t=>t.entryDate),start=valid.length?Math.min(...valid.map(t=>new Date(t.entryDate).getTime())):points[0][0],source=points.filter(p=>p[0]>=start),rows=[];let buy=100,strategy=100,previousInvested=false;source.forEach((p,i)=>{const marketReturn=i?p[1]/source[i-1][1]-1:0,invested=valid.some(t=>p[0]>=new Date(t.entryDate).getTime()&&(!t.exitDate||p[0]<new Date(t.exitDate).getTime()));buy*=1+marketReturn;if(previousInvested)strategy*=1+marketReturn;rows.push({timestamp:p[0],buy,strategy:valid.length?strategy:null,invested});previousInvested=invested;});return rows;}
 function renderAnalytics(){
-  const trades=renderTradeTable(),comparison=buildComparison(currentInstrument().intraday,trades),dataEnd=comparison.at(-1)?.timestamp??0,dataStart=Math.max(comparison[0]?.timestamp??0,rangeStart(dataEnd,analyticsRange)),visible=comparison.filter(r=>r.timestamp>=dataStart),x=visible.map(r=>new Date(r.timestamp)),buy=visible.map(r=>r.buy),strategy=visible.map(r=>r.strategy),invested=visible.map(r=>r.invested),xRange=[new Date(dataStart),new Date(dataEnd)];if(!visible.length)return;
+  const trades=renderTradeTable(),comparison=buildComparison(currentInstrument().intraday,trades),dataEnd=comparison.at(-1)?.timestamp??0,cutoff=Math.max(comparison[0]?.timestamp??0,rangeStart(dataEnd,analyticsRange)),visible=comparison.filter(r=>r.timestamp>=cutoff),dataStart=visible[0]?.timestamp??cutoff,x=visible.map(r=>new Date(r.timestamp)),buy=visible.map(r=>r.buy),strategy=visible.map(r=>r.strategy),invested=visible.map(r=>r.invested),xRange=[new Date(dataStart),new Date(dataEnd)];if(!visible.length)return;
   const traces=[{...lineTrace(x,buy,"Buy & Hold","#0f172a","solid",1,2.3),hovertemplate:"Buy & Hold: %{y:.2f}<extra></extra>"}];if(trades.length)traces.push({...lineTrace(x,strategy,"Meine Strategie","#7c3aed","solid",1,2.3),hovertemplate:"Meine Strategie: %{y:.2f}<extra></extra>"});
   for(const t of trades){const entryTime=new Date(t.entryDate).getTime();if(entryTime>=dataStart&&entryTime<=dataEnd){const entryIndex=nearestIndex(visible,entryTime);traces.push({x:[new Date(t.entryDate)],y:[buy[entryIndex]],type:"scatter",mode:"markers",name:`Einstieg ${t.id}`,showlegend:false,marker:{symbol:"triangle-up",size:12,color:"#16a34a",line:{width:1.3,color:"#fff"}},hovertemplate:`Einstieg · Trade ${t.id}<br>%{x|%d.%m.%Y}<extra></extra>`});}if(t.exitDate){const exitTime=new Date(t.exitDate).getTime();if(exitTime>=dataStart&&exitTime<=dataEnd){const exitIndex=nearestIndex(visible,exitTime);traces.push({x:[new Date(t.exitDate)],y:[buy[exitIndex]],type:"scatter",mode:"markers",name:`Ausstieg ${t.id}`,showlegend:false,marker:{symbol:"triangle-down",size:12,color:"#dc2626",line:{width:1.3,color:"#fff"}},hovertemplate:`Ausstieg · Trade ${t.id}<br>%{x|%d.%m.%Y}<extra></extra>`});}}}
   renderMetrics(comparison.map(r=>r.strategy).filter(Number.isFinite),comparison.map(r=>r.buy),comparison.map(r=>new Date(r.timestamp)),trades.length>0);
