@@ -77,8 +77,7 @@ function splitSigned(x,y,axis,name){
 }
 function splitPriceAroundClose(x,y,axis,previousClose){
   const traces=splitSigned(x,y.map(value=>Number.isFinite(value)?value-previousClose:null),axis,"Intraday-Kurs");
-  traces.forEach(trace=>{trace.y=trace.y.map(value=>Number.isFinite(value)?value+previousClose:value);trace.fill="none";trace.hoverinfo="skip";trace.line.width=2.5;trace.meta="intraday-extension";});
-  return traces;
+  return traces.flatMap(trace=>{trace.y=trace.y.map(value=>Number.isFinite(value)?value+previousClose:value);trace.fill="tonexty";trace.hoverinfo="skip";trace.line.width=1.8;trace.meta="intraday-extension";const baseline={...trace,y:trace.y.map(value=>Number.isFinite(value)?previousClose:value),name:`${trace.name} Referenz`,fill:"none",fillcolor:"rgba(0,0,0,0)",line:{color:"rgba(15,23,42,0)",width:0},hoverinfo:"skip"};return [baseline,trace];});
 }
 function splitTrend(x,y,name){
   const risingX=[],risingY=[],fallingX=[],fallingY=[];let previousSign=null;for(let i=1;i<y.length;i++){if(!Number.isFinite(y[i-1])||!Number.isFinite(y[i])){previousSign=null;continue;}const sign=y[i]>y[i-1]?1:y[i]<y[i-1]?-1:(previousSign||1),[xs,ys]=sign>0?[risingX,risingY]:[fallingX,fallingY];if(sign!==previousSign){if(xs.length&&xs.at(-1)!==null){xs.push(null);ys.push(null);}xs.push(x[i-1]);ys.push(y[i-1]);}xs.push(x[i]);ys.push(y[i]);previousSign=sign;}
