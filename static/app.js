@@ -1,5 +1,5 @@
 const $ = id => document.getElementById(id);
-const PARAM_IDS = ["showRegression","regShort","regMedium","regLong","showBollinger","bollingerWindow","bollingerStd","showKalman","kalmanQ","kalmanR","showBackward","backwardQ","backwardR"];
+const PARAM_IDS = ["showRegression","regShort","regMedium","regLong","showBollinger","bollingerWindow","bollingerStd","showKalman","kalmanQ","kalmanR","showZeroPhase","smoothWindow"];
 const RANGE_OPTIONS = [["6 Monate","6m"],["1 Jahr","1y"],["2 Jahre","2y"],["5 Jahre","5y"],["Max","max"]];
 const ANALYTICS_RANGE_OPTIONS = RANGE_OPTIONS;
 let payload, activeTab="tools", toolRange="6m", analyticsRange="max", selectedTrade=null;
@@ -56,10 +56,13 @@ function kalman2d(points,q,r){
   }
   return out;
 }
-function backwardKalman2d(points,q,r){
-  if(!points.length)return [];const reversed=[];let elapsed=0;
-  for(let index=points.length-1;index>=0;index--){if(index<points.length-1)elapsed+=Math.max(1,points[index+1][0]-points[index][0]);reversed.push([elapsed,+points[index][1]]);}
-  const smoothed=kalman2d(reversed,q,r);smoothed[0]=+points.at(-1)[1];return smoothed.reverse();
+function solveQuadraticAtZero(rows){
+  let s0=rows.length,s1=0,s2=0,s3=0,s4=0,t0=0,t1=0,t2=0;for(const [x,y] of rows){const x2=x*x;s1+=x;s2+=x2;s3+=x2*x;s4+=x2*x2;t0+=y;t1+=x*y;t2+=x2*y;}
+  const matrix=[[s0,s1,s2,t0],[s1,s2,s3,t1],[s2,s3,s4,t2]];for(let column=0;column<3;column++){let pivot=column;for(let row=column+1;row<3;row++)if(Math.abs(matrix[row][column])>Math.abs(matrix[pivot][column]))pivot=row;[matrix[column],matrix[pivot]]=[matrix[pivot],matrix[column]];if(Math.abs(matrix[column][column])<1e-12)return rows[Math.floor(rows.length/2)][1];for(let row=column+1;row<3;row++){const factor=matrix[row][column]/matrix[column][column];for(let cell=column;cell<4;cell++)matrix[row][cell]-=factor*matrix[column][cell];}}
+  for(let row=2;row>=0;row--){for(let cell=row+1;cell<3;cell++)matrix[row][3]-=matrix[row][cell]*matrix[cell][3];matrix[row][3]/=matrix[row][row];}return matrix[0][3];
+}
+function zeroPhaseSmoother(points,windowSize){
+  const y=pointPrices(points);if(y.length<3)return y;let window=Math.max(5,Math.round(windowSize)||21);if(window%2===0)window++;window=Math.min(window,y.length%2===1?y.length:y.length-1);const half=Math.floor(window/2),out=y.map((_,index)=>{const start=Math.max(0,Math.min(index-half,y.length-window)),rows=[];for(let offset=0;offset<window;offset++){const sample=start+offset;rows.push([sample-index,y[sample]]);}return solveQuadraticAtZero(rows);});out[out.length-1]=y.at(-1);return out;
 }
 function tradingBreaks(points){
   if(!points.length)return [{bounds:["sat","mon"]}];const present=new Set(points.map(p=>dateKey(p[0]))),missing=[],cursor=new Date(`${dateKey(points[0][0])}T00:00:00Z`),end=new Date(`${dateKey(points.at(-1)[0])}T00:00:00Z`);
@@ -174,7 +177,7 @@ function renderTools(){
     const fullK=kalman2d(dailyFull,Math.max(.001,+$("kalmanQ").value||1),Math.max(.001,+$("kalmanR").value||25)),k=fullK.slice(dailyStart);
     traces.push(...splitTrend(dailyX,k,"Kalman 2D"));const fullBar=fullK.map((value,index)=>index?value-fullK[index-1]:null);panels.push({label:"Kalman-Steigung zum Vortag",color:"#db2777",bar:fullBar.slice(dailyStart),intradayBar:intradayX.map(()=>0)});
   }
-  if($("showBackward").checked){const fullBackward=backwardKalman2d(dailyFull,Math.max(.001,+$("backwardQ").value||1),Math.max(.001,+$("backwardR").value||25)),backward=fullBackward.slice(dailyStart);traces.push({...lineTrace(dailyX,backward,"Backward Kalman · Look-ahead","#0891b2","solid",1,2.1),hoverinfo:"skip"});}
+  if($("showZeroPhase").checked){const fullSmooth=zeroPhaseSmoother(dailyFull,+$("smoothWindow").value||21),smooth=fullSmooth.slice(dailyStart);traces.push({...lineTrace(dailyX,smooth,"Zero-Phase Smoother · Look-ahead","#0891b2","solid",1,2.1),hoverinfo:"skip"});}
   if(instrumentKey()===Object.keys(payload.instruments)[0])for(const t of loadTrades()){const entryTime=new Date(t.entryDate).getTime();if(entryTime>=xRange[0].getTime()&&entryTime<=xRange[1].getTime())traces.push({x:[new Date(t.entryDate)],y:[t.entryPrice],type:"scatter",mode:"markers",name:"Kauf",showlegend:false,hoverinfo:"skip",marker:{symbol:"triangle-up",size:11,color:"#16a34a",line:{width:1.2,color:"#fff"}}});if(t.exitDate){const exitTime=new Date(t.exitDate).getTime();if(exitTime>=xRange[0].getTime()&&exitTime<=xRange[1].getTime())traces.push({x:[new Date(t.exitDate)],y:[t.exitPrice],type:"scatter",mode:"markers",name:"Verkauf",showlegend:false,hoverinfo:"skip",marker:{symbol:"triangle-down",size:11,color:"#dc2626",line:{width:1.2,color:"#fff"}}});}}
   const rows=1+panels.length,total=420+panels.length*105,main=420/total,small=105/total,leftDomain=hasIntraday?[0,.85]:[0,1],rightDomain=[.85,1],rightAxisStart=rows+1,intradayEnd=hasIntraday?intradaySessionEnd(currentInstrument(),intradayPoints[0][0]):null,intradayRange=hasIntraday?[new Date(intradayPoints[0][0]),new Date(Math.max(intradayEnd,intradayPoints[0][0]+300000))]:null,previousClose=visibleDailyY.at(-1);
   if(hasIntraday){traces.push(...splitPriceAroundClose(intradayX,intradayY,rightAxisStart,previousClose));traces.push({x:intradayX,y:intradayY,type:"scatter",mode:"markers",xaxis:`x${rightAxisStart}`,yaxis:`y${rightAxisStart}`,meta:"intraday-extension",showlegend:false,marker:{size:intradayX.length===1?7:9,color:intradayX.length===1?"#000":"rgba(0,0,0,0)",line:{color:"#000",width:intradayX.length===1?1:0}},customdata:intradayPoints.map(point=>toolsHoverLabel(point[0])),hovertemplate:"%{customdata}<br>Intraday-Kurs: %{y:.4f}<extra></extra>"});}
