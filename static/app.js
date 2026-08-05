@@ -84,11 +84,12 @@ function splitTrend(x,y,name){
 function installCrossPanelHover(graphId){
   const graph=$(graphId)?.querySelector(".js-plotly-plot"); if(!graph||!graph._fullLayout||typeof graph.on!=="function")return;
   if(graph.__msciHoverHandler&&typeof graph.removeListener==="function"){graph.removeListener("plotly_hover",graph.__msciHoverHandler);graph.removeListener("plotly_unhover",graph.__msciUnhoverHandler);if(graph.__msciClickHandler)graph.removeListener("plotly_click",graph.__msciClickHandler);}
-  let line=graph.querySelector(".cross-panel-hover-line");if(!line){line=document.createElement("div");line.className="cross-panel-hover-line";graph.appendChild(line);}
-  const position=event=>{const point=event?.points?.[0],size=graph._fullLayout?._size;if(!point?.xaxis||!size)return false;line.style.left=`${point.xaxis.d2p(point.x)+point.xaxis._offset}px`;line.style.top=`${size.t}px`;line.style.height=`${size.h}px`;line.style.display="block";return true;};
-  graph.__msciHoverHandler=event=>{if(!position(event)&&line.dataset.pinned!=="true")line.style.display="none";};
-  graph.__msciUnhoverHandler=()=>{if(line.dataset.pinned!=="true")line.style.display="none";};
-  graph.__msciClickHandler=event=>{if(position(event))line.dataset.pinned=line.dataset.pinned==="true"?"false":"true";};
+  const markerIndex=(graph.layout.shapes||[]).findIndex(shape=>shape?.name==="cross-panel-marker");if(markerIndex<0)return;
+  const setMarker=(x,visible)=>{const update={};update[`shapes[${markerIndex}].x0`]=x;update[`shapes[${markerIndex}].x1`]=x;update[`shapes[${markerIndex}].visible`]=visible;Plotly.relayout(graph,update);};
+  const pointX=event=>event?.points?.[0]?.x;
+  graph.__msciHoverHandler=event=>{const x=pointX(event);if(x!==undefined&&!graph.__msciMarkerPinned)setMarker(x,true);};
+  graph.__msciUnhoverHandler=()=>{if(!graph.__msciMarkerPinned)setMarker(graph.layout.shapes[markerIndex].x0,false);};
+  graph.__msciClickHandler=event=>{const x=pointX(event);if(x===undefined)return;graph.__msciMarkerPinned=!graph.__msciMarkerPinned;setMarker(x,graph.__msciMarkerPinned);};
   graph.on("plotly_hover",graph.__msciHoverHandler);graph.on("plotly_unhover",graph.__msciUnhoverHandler);graph.on("plotly_click",graph.__msciClickHandler);
 }
 function installVisibleYAutoscale(graphId){
@@ -158,6 +159,7 @@ function renderTools(){
     if(panel.bar){ traces.push({x,y:panel.bar,type:"bar",name:panel.label,showlegend:false,marker:{color:panel.bar.map(v=>v>=0?"#16a34a":"#dc2626")},xaxis:`x${axis}`,yaxis:`y${axis}`,hovertemplate:"Steigung zum Vortag: %{y:.4f}<extra></extra>"}); }
     else panel.series.forEach((series,i)=>traces.push(...splitSigned(x,series,axis,panel.series.length>1?(i?"Kurs - Lower Band":"Kurs - Upper Band"):panel.label)));
   });
+  layout.shapes.push({name:"cross-panel-marker",type:"line",xref:"x",yref:"paper",x0:x[0],x1:x[0],y0:0,y1:1,line:{color:"rgba(37,99,235,.68)",width:1,dash:"dash"},layer:"above",visible:false});
   Plotly.react("toolsChart",traces,layout,PLOT_CONFIG).then(()=>{installCrossPanelHover("toolsChart");installVisibleYAutoscale("toolsChart");});
 }
 

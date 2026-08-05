@@ -1729,6 +1729,19 @@ def build_figure(
         row=row_count,
         col=1,
     )
+    fig.add_shape(
+        name="cross-panel-marker",
+        type="line",
+        xref="x",
+        yref="paper",
+        x0=min_date,
+        x1=min_date,
+        y0=0,
+        y1=1,
+        line={"color": "rgba(37, 99, 235, 0.68)", "width": 1, "dash": "dash"},
+        layer="above",
+        visible=False,
+    )
     return fig
 
 
@@ -3244,47 +3257,39 @@ app.clientside_callback(
                 }
             }
 
-            let line = graph.querySelector(".cross-panel-hover-line");
-            if (!line) {
-                line = document.createElement("div");
-                line.className = "cross-panel-hover-line";
-                Object.assign(line.style, {
-                    position: "absolute",
-                    display: "none",
-                    width: "0",
-                    borderLeft: "1px dashed rgba(37, 99, 235, 0.58)",
-                    pointerEvents: "none",
-                    zIndex: "20"
-                });
-                graph.appendChild(line);
+            const markerIndex = (graph.layout.shapes || []).findIndex(
+                shape => shape && shape.name === "cross-panel-marker"
+            );
+            if (markerIndex < 0) {
+                return;
             }
-
-            const positionLine = function(eventData) {
+            const setMarker = function(x, visible) {
+                const update = {};
+                update[`shapes[${markerIndex}].x0`] = x;
+                update[`shapes[${markerIndex}].x1`] = x;
+                update[`shapes[${markerIndex}].visible`] = visible;
+                Plotly.relayout(graph, update);
+            };
+            const pointX = function(eventData) {
                 const point = eventData && eventData.points && eventData.points[0];
-                const size = graph._fullLayout && graph._fullLayout._size;
-                if (!point || !point.xaxis || !size) {
-                    return false;
-                }
-                const xPixel = point.xaxis.d2p(point.x) + point.xaxis._offset;
-                line.style.left = xPixel + "px";
-                line.style.top = size.t + "px";
-                line.style.height = size.h + "px";
-                line.style.display = "block";
-                return true;
+                return point ? point.x : undefined;
             };
             graph.__msciHoverHandler = function(eventData) {
-                if (!positionLine(eventData) && line.dataset.pinned !== "true") {
-                    line.style.display = "none";
+                const x = pointX(eventData);
+                if (x !== undefined && !graph.__msciMarkerPinned) {
+                    setMarker(x, true);
                 }
             };
             graph.__msciUnhoverHandler = function() {
-                if (line.dataset.pinned !== "true") {
-                    line.style.display = "none";
+                if (!graph.__msciMarkerPinned) {
+                    setMarker(graph.layout.shapes[markerIndex].x0, false);
                 }
             };
             graph.__msciClickHandler = function(eventData) {
-                if (positionLine(eventData)) {
-                    line.dataset.pinned = line.dataset.pinned === "true" ? "false" : "true";
+                const x = pointX(eventData);
+                if (x !== undefined) {
+                    graph.__msciMarkerPinned = !graph.__msciMarkerPinned;
+                    setMarker(x, graph.__msciMarkerPinned);
                 }
             };
             graph.on("plotly_hover", graph.__msciHoverHandler);
