@@ -1729,19 +1729,21 @@ def build_figure(
         row=row_count,
         col=1,
     )
-    fig.add_shape(
-        name="cross-panel-marker",
-        type="line",
-        xref="x",
-        yref="paper",
-        x0=min_date,
-        x1=min_date,
-        y0=0,
-        y1=1,
-        line={"color": "rgba(37, 99, 235, 0.68)", "width": 1, "dash": "dash"},
-        layer="above",
-        visible=False,
-    )
+    for marker_row in range(1, row_count + 1):
+        axis_suffix = "" if marker_row == 1 else str(marker_row)
+        fig.add_shape(
+            name=f"cross-panel-marker-{marker_row}",
+            type="line",
+            xref=f"x{axis_suffix}",
+            yref=f"y{axis_suffix} domain",
+            x0=min_date,
+            x1=min_date,
+            y0=0,
+            y1=1,
+            line={"color": "rgba(37, 99, 235, 0.68)", "width": 1, "dash": "dash"},
+            layer="above",
+            visible=False,
+        )
     return fig
 
 
@@ -3257,17 +3259,23 @@ app.clientside_callback(
                 }
             }
 
-            const markerIndex = (graph.layout.shapes || []).findIndex(
-                shape => shape && shape.name === "cross-panel-marker"
-            );
-            if (markerIndex < 0) {
+            const markerIndexes = (graph.layout.shapes || [])
+                .map((shape, index) =>
+                    shape && shape.name && shape.name.startsWith("cross-panel-marker-")
+                        ? index
+                        : -1
+                )
+                .filter(index => index >= 0);
+            if (!markerIndexes.length) {
                 return;
             }
             const setMarker = function(x, visible) {
                 const update = {};
-                update[`shapes[${markerIndex}].x0`] = x;
-                update[`shapes[${markerIndex}].x1`] = x;
-                update[`shapes[${markerIndex}].visible`] = visible;
+                markerIndexes.forEach(function(index) {
+                    update[`shapes[${index}].x0`] = x;
+                    update[`shapes[${index}].x1`] = x;
+                    update[`shapes[${index}].visible`] = visible;
+                });
                 Plotly.relayout(graph, update);
             };
             const pointX = function(eventData) {
@@ -3282,7 +3290,7 @@ app.clientside_callback(
             };
             graph.__msciUnhoverHandler = function() {
                 if (!graph.__msciMarkerPinned) {
-                    setMarker(graph.layout.shapes[markerIndex].x0, false);
+                    setMarker(graph.layout.shapes[markerIndexes[0]].x0, false);
                 }
             };
             graph.__msciClickHandler = function(eventData) {
