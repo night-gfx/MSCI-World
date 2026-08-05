@@ -613,8 +613,12 @@ def load_trading_tools_data(
         return history
 
     tools_data = history.copy()
-    latest_history_timestamp = pd.Timestamp(tools_data["Date"].max())
-    quote_timestamp = max(quote_timestamp, latest_history_timestamp)
+    tools_data["Date"] = pd.to_datetime(tools_data["Date"]).dt.normalize()
+    latest_history_timestamp = pd.Timestamp(tools_data["Date"].max()).normalize()
+    quote_timestamp = max(
+        pd.Timestamp(quote_timestamp).normalize(),
+        latest_history_timestamp,
+    )
     live_row = pd.DataFrame({"Date": [quote_timestamp], "Price": [last_price]})
     tools_data = pd.concat([tools_data, live_row], ignore_index=True)
     tools_data = (
@@ -1638,7 +1642,7 @@ def build_figure(
         ticks="",
         showticklabels=False,
         tickfont={"size": 10, "color": "#64748b"},
-        hoverformat="%d.%m.%Y %H:%M",
+        hoverformat="%d.%m.%Y",
         rangeslider_visible=False,
         automargin=True,
         showspikes=False,
