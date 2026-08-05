@@ -124,7 +124,7 @@ function installVisibleYAutoscale(graphId){
   };
   graph.on("plotly_relayout",graph.__msciRelayoutHandler);
 }
-const PLOT_CONFIG={responsive:true,displaylogo:false,modeBarButtonsToAdd:["drawline","drawopenpath","eraseshape","resetScale2d"]};
+const PLOT_CONFIG={responsive:true,displaylogo:false,scrollZoom:true,doubleClick:"reset+autosize",modeBarButtonsToAdd:["drawline","drawopenpath","eraseshape","resetScale2d"]};
 function toolsSeries(){
   const inst=currentInstrument(),byDay=new Map();for(const point of inst.daily){const day=dateKey(point[0]);byDay.set(day,[Date.parse(`${day}T00:00:00Z`),+point[1]]);}
   const intraday=[...(inst.intraday||[])].filter(point=>Number.isFinite(+point[0])&&Number.isFinite(+point[1])).sort((a,b)=>a[0]-b[0]),updatedDay=dateKey(payload.updated_at),sessionDay=intraday.length?dateKey(intraday.at(-1)[0]):null,currentSession=sessionDay===updatedDay;
