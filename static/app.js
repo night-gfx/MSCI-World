@@ -57,8 +57,8 @@ function kalman2d(points,q,r){
   return out;
 }
 function tradingBreaks(points){
-  if(!points.length)return [{bounds:["sat","mon"]}];const present=new Set(points.map(p=>dateKey(p[0]))),missing=[],cursor=new Date(points[0][0]),end=new Date(points.at(-1)[0]);cursor.setHours(0,0,0,0);
-  while(cursor<=end){const day=cursor.getDay();if(day!==0&&day!==6&&!present.has(dateKey(cursor)))missing.push(dateKey(cursor));cursor.setDate(cursor.getDate()+1);}
+  if(!points.length)return [{bounds:["sat","mon"]}];const present=new Set(points.map(p=>dateKey(p[0]))),missing=[],cursor=new Date(`${dateKey(points[0][0])}T00:00:00Z`),end=new Date(`${dateKey(points.at(-1)[0])}T00:00:00Z`);
+  while(cursor<=end){const day=cursor.getUTCDay();if(day!==0&&day!==6&&!present.has(dateKey(cursor)))missing.push(dateKey(cursor));cursor.setUTCDate(cursor.getUTCDate()+1);}
   const breaks=[{bounds:["sat","mon"]}];if(missing.length)breaks.push({values:missing,dvalue:86400000});return breaks;
 }
 function paddedRange(values,includeZero=false){const finite=values.flat().filter(Number.isFinite);if(!finite.length)return undefined;const lo=Math.min(...finite),hi=Math.max(...finite);if(includeZero){const limit=Math.max(Math.abs(lo),Math.abs(hi));return limit>0?[-limit*1.07,limit*1.07]:[-1,1];}const pad=hi===lo?Math.max(Math.abs(hi)*.05,1):(hi-lo)*.07;return [lo-pad,hi+pad];}
@@ -70,8 +70,8 @@ function splitSigned(x,y,axis,name){
   const append=(xs,ys,xv,yv)=>{if(xs.at(-1)?.getTime?.()===xv?.getTime?.())ys[ys.length-1]=yv;else{xs.push(xv);ys.push(yv);}},close=(xs,ys)=>{if(xs.length&&xs.at(-1)!==null){xs.push(null);ys.push(null);}};
   for(let i=0;i<y.length;i++){const value=y[i];if(!Number.isFinite(value)){close(positiveX,positiveY);close(negativeX,negativeY);previous=null;previousSign=null;continue;}const sign=value>0?1:value<0?-1:(previousSign||1);if(!previous){const [xs,ys]=sign>0?[positiveX,positiveY]:[negativeX,negativeY];append(xs,ys,x[i],value);}else if(sign===previousSign){const [xs,ys]=sign>0?[positiveX,positiveY]:[negativeX,negativeY];append(xs,ys,x[i],value);}else{const fraction=Math.abs(previous.value)/(Math.abs(previous.value)+Math.abs(value)),crossing=new Date(previous.x.getTime()+(x[i].getTime()-previous.x.getTime())*fraction),[oldX,oldY]=previousSign>0?[positiveX,positiveY]:[negativeX,negativeY],[newX,newY]=sign>0?[positiveX,positiveY]:[negativeX,negativeY];append(oldX,oldY,crossing,0);close(oldX,oldY);append(newX,newY,crossing,0);append(newX,newY,x[i],value);}previous={x:x[i],value};previousSign=sign;}
   return [
-    {...lineTrace(positiveX,positiveY,`${name} positiv`,"#16a34a","solid",axis,1.9),showlegend:false,hoverinfo:"none",fill:"tozeroy",fillcolor:"rgba(22,163,74,.11)"},
-    {...lineTrace(negativeX,negativeY,`${name} negativ`,"#dc2626","solid",axis,1.9),showlegend:false,hoverinfo:"none",fill:"tozeroy",fillcolor:"rgba(220,38,38,.10)"}
+    {...lineTrace(positiveX,positiveY,`${name} positiv`,"#16a34a","solid",axis,1.9),mode:"lines+markers",marker:{size:3.5,color:"#16a34a",opacity:.58},showlegend:false,hoverinfo:"none",fill:"tozeroy",fillcolor:"rgba(22,163,74,.11)"},
+    {...lineTrace(negativeX,negativeY,`${name} negativ`,"#dc2626","solid",axis,1.9),mode:"lines+markers",marker:{size:3.5,color:"#dc2626",opacity:.58},showlegend:false,hoverinfo:"none",fill:"tozeroy",fillcolor:"rgba(220,38,38,.10)"}
   ];
 }
 function splitTrend(x,y,name){
@@ -114,7 +114,7 @@ function installVisibleYAutoscale(graphId){
   graph.on("plotly_relayout",graph.__msciRelayoutHandler);
 }
 const PLOT_CONFIG={responsive:true,displaylogo:false,modeBarButtonsToAdd:["drawline","drawopenpath","eraseshape","resetScale2d"]};
-function toolsPoints(){const inst=currentInstrument(),points=[...inst.daily];if(inst.last_price&&Number.isFinite(+inst.last_price[1])){points.push([+inst.last_price[0],+inst.last_price[1]]);}const unique=new Map(points.map(p=>[+p[0],[+p[0],+p[1]]]));return [...unique.values()].sort((a,b)=>a[0]-b[0]);}
+function toolsPoints(){const inst=currentInstrument(),byDay=new Map();for(const point of inst.daily){const day=dateKey(point[0]);byDay.set(day,[Date.parse(`${day}T00:00:00Z`),+point[1]]);}if(inst.last_price&&Number.isFinite(+inst.last_price[1])){const day=dateKey(inst.last_price[0]);byDay.set(day,[Date.parse(`${day}T00:00:00Z`),+inst.last_price[1]]);}return [...byDay.values()].sort((a,b)=>a[0]-b[0]);}
 
 function renderTools(){
   const fullPoints=toolsPoints(),fullY=pointPrices(fullPoints),points=filterRange(fullPoints,toolRange),startIndex=fullPoints.findIndex(p=>p[0]===points[0][0]),x=pointDates(points),y=pointPrices(points),xRange=[new Date(Math.max(fullPoints[0][0],rangeStart(fullPoints.at(-1)[0],toolRange))),new Date(fullPoints.at(-1)[0])];
@@ -143,11 +143,12 @@ function renderTools(){
   }
   if(instrumentKey()===Object.keys(payload.instruments)[0])for(const t of loadTrades()){const entryTime=new Date(t.entryDate).getTime();if(entryTime>=xRange[0].getTime()&&entryTime<=xRange[1].getTime())traces.push({x:[new Date(t.entryDate)],y:[t.entryPrice],type:"scatter",mode:"markers",name:"Kauf",showlegend:false,hoverinfo:"skip",marker:{symbol:"triangle-up",size:11,color:"#16a34a",line:{width:1.2,color:"#fff"}}});if(t.exitDate){const exitTime=new Date(t.exitDate).getTime();if(exitTime>=xRange[0].getTime()&&exitTime<=xRange[1].getTime())traces.push({x:[new Date(t.exitDate)],y:[t.exitPrice],type:"scatter",mode:"markers",name:"Verkauf",showlegend:false,hoverinfo:"skip",marker:{symbol:"triangle-down",size:11,color:"#dc2626",line:{width:1.2,color:"#fff"}}});}}
   const rows=1+panels.length,total=420+panels.length*105,main=420/total,small=105/total;
-  const layout={...baseLayout(),height:total+114,showlegend:false,hoversubplots:"axis",margin:{l:48,r:88,t:72,b:42},xaxis:{...axisBase(fullPoints),range:xRange,anchor:"y",showticklabels:false,hoverformat:"%d.%m.%Y %H:%M"},yaxis:{domain:[1-main,1],range:paddedRange(traces.filter(t=>!t.yaxis||t.yaxis==="y").map(t=>t.y||[])),showgrid:false,showline:false,zeroline:false,tickformat:".3f",tickfont:{size:10,color:"#64748b"},automargin:true},bargap:.06,annotations:[],shapes:[]};
+  const chartHeight=total+114;$("toolsChart").style.height=`${chartHeight}px`;$("toolsChart").style.minHeight=`${chartHeight}px`;
+  const layout={...baseLayout(),height:chartHeight,showlegend:false,hoversubplots:"axis",margin:{l:48,r:88,t:72,b:42},xaxis:{...axisBase(fullPoints),range:xRange,anchor:"y",showticklabels:false,hoverformat:"%d.%m.%Y"},yaxis:{domain:[1-main,1],range:paddedRange(traces.filter(t=>!t.yaxis||t.yaxis==="y").map(t=>t.y||[])),showgrid:false,showline:false,zeroline:false,tickformat:".3f",tickfont:{size:10,color:"#64748b"},automargin:true},bargap:.06,annotations:[],shapes:[]};
   for(const panel of panels)if(panel.endpoint)layout.annotations.push({x:panel.endpoint.x,y:panel.endpoint.y,xref:"x",yref:"y",text:panel.endpoint.text,showarrow:false,xanchor:"left",yanchor:"middle",xshift:7,font:{family:"Arial, sans-serif",size:10,color:panel.color},bgcolor:"rgba(255,255,255,.88)",borderpad:2});
   panels.forEach((panel,index)=>{
     const axis=index+2, top=1-main-index*small, bottom=Math.max(0,top-small);
-    layout[`xaxis${axis}`]={...axisBase(fullPoints),range:xRange,anchor:`y${axis}`,matches:"x",showticklabels:index===panels.length-1,hoverformat:"%d.%m.%Y %H:%M"};
+    layout[`xaxis${axis}`]={...axisBase(fullPoints),range:xRange,anchor:`y${axis}`,matches:"x",showticklabels:index===panels.length-1,hoverformat:"%d.%m.%Y"};
     layout[`yaxis${axis}`]={domain:[bottom,top],range:paddedRange(panel.bar?[panel.bar]:panel.series,true),showgrid:false,showline:false,zeroline:false,showticklabels:false,ticks:""};
     layout.shapes.push({type:"line",xref:"paper",x0:0,x1:1,yref:`y${axis}`,y0:0,y1:0,line:{color:"#111827",width:.55},layer:"above"});
     layout.annotations.push({xref:"paper",yref:`y${axis}`,x:.006,y:0,text:panel.label,showarrow:false,xanchor:"left",yanchor:"bottom",yshift:3,font:{family:"Arial, sans-serif",size:10,color:panel.color},opacity:.52});
