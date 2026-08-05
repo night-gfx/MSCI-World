@@ -1374,7 +1374,6 @@ def build_figure(
             col=1,
         )
 
-    regression_endpoints = []
     for label, color, dash_style, reg in active_regressions:
         visible_reg = reg[
             (reg["Date"] >= min_date) & (reg["Date"] <= max_date)
@@ -1393,11 +1392,6 @@ def build_figure(
             row=1,
             col=1,
         )
-        last_point = visible_reg.iloc[-1]
-        regression_endpoints.append(
-            (label, color, last_point["Date"], float(last_point["Regression"]))
-        )
-
     if show_kalman:
         visible_kalman = kalman[
             (kalman["Date"] >= min_date) & (kalman["Date"] <= max_date)
@@ -1662,21 +1656,6 @@ def build_figure(
         row=1,
         col=1,
     )
-    for label, color, end_date, end_value in regression_endpoints:
-        fig.add_annotation(
-            x=end_date,
-            y=end_value,
-            xref="x",
-            yref="y",
-            text=label,
-            showarrow=False,
-            xanchor="left",
-            yanchor="middle",
-            xshift=7,
-            font={"family": "Arial, sans-serif", "size": 10, "color": color},
-            bgcolor="rgba(255, 255, 255, 0.88)",
-            borderpad=2,
-        )
     for spread_row, label, color, spread_df in difference_panels:
         visible_difference = spread_df[
             (spread_df["Date"] >= min_date) & (spread_df["Date"] <= max_date)
