@@ -2,7 +2,7 @@ const $ = id => document.getElementById(id);
 const PARAM_IDS = ["showRegression","regShort","regMedium","regLong","showBollinger","bollingerWindow","bollingerStd","showKalman","kalmanQ","kalmanR"];
 const RANGE_OPTIONS = [["6 Monate","6m"],["1 Jahr","1y"],["2 Jahre","2y"],["5 Jahre","5y"],["Max","max"]];
 const ANALYTICS_RANGE_OPTIONS = RANGE_OPTIONS;
-let payload, activeTab="tools", toolRange="6m", analyticsRange="max", selectedTrade=null, autoScaleZoom=true;
+let payload, activeTab="tools", toolRange="6m", analyticsRange="max", selectedTrade=null;
 const saved = JSON.parse(localStorage.getItem("msci-world-defaults") || "{}");
 for (const id of PARAM_IDS) if (saved[id] !== undefined) $(id)[$(id).type === "checkbox" ? "checked" : "value"] = saved[id];
 
@@ -102,7 +102,6 @@ function installVisibleYAutoscale(graphId){
   const graph=$(graphId)?.querySelector(".js-plotly-plot");if(!graph||!graph._fullLayout||typeof graph.on!=="function")return;
   if(graph.__msciRelayoutHandler&&typeof graph.removeListener==="function")graph.removeListener("plotly_relayout",graph.__msciRelayoutHandler);
   graph.__msciRelayoutHandler=event=>{
-    if(graphId==="toolsChart"&&!autoScaleZoom)return;
     const rangeEntry=Object.entries(event||{}).find(([key,value])=>/^xaxis\d*\.range$/.test(key)&&Array.isArray(value));
     const startEntry=Object.entries(event||{}).find(([key])=>/^xaxis\d*\.range\[0\]$/.test(key));
     const reset=Object.entries(event||{}).some(([key,value])=>/^xaxis\d*\.autorange$/.test(key)&&value===true);
@@ -113,6 +112,7 @@ function installVisibleYAutoscale(graphId){
     if(!Number.isFinite(start)&&start!==-Infinity)return;if(!Number.isFinite(end)&&end!==Infinity)return;
     const updates={};
     for(const axisName of Object.keys(graph._fullLayout).filter(key=>/^yaxis\d*$/.test(key))){
+      if(graphId==="toolsChart"&&Number.isFinite(graph.__msciSymmetricCenters?.[axisName]))continue;
       const suffix=axisName.slice(5),traceAxis=suffix?`y${suffix}`:"y",values=[];
       for(const trace of graph.data){
         if((trace.yaxis||"y")!==traceAxis||!Array.isArray(trace.x)||!Array.isArray(trace.y))continue;
@@ -120,7 +120,6 @@ function installVisibleYAutoscale(graphId){
       }
       const symmetricCenter=graph.__msciSymmetricCenters?.[axisName],range=Number.isFinite(symmetricCenter)?symmetricPriceRange([values],symmetricCenter):paddedRange([values],graphId==="toolsChart"&&axisName!=="yaxis");if(range)updates[`${axisName}.range`]=range;
     }
-    const alignment=graph.__msciIntradayAlignment,historicalRange=updates["yaxis.range"];if(alignment&&historicalRange){const domain=alignedIntradayDomain(alignment.center,historicalRange,alignment.historicalDomain);updates[`${alignment.axisName}.domain`]=domain;const backgroundIndex=(graph.layout.shapes||[]).findIndex(shape=>shape?.name==="intraday-background");if(backgroundIndex>=0){updates[`shapes[${backgroundIndex}].y0`]=domain[0];updates[`shapes[${backgroundIndex}].y1`]=domain[1];}}
     if(Object.keys(updates).length)Plotly.relayout(graph,updates);
   };
   graph.on("plotly_relayout",graph.__msciRelayoutHandler);
@@ -184,7 +183,7 @@ function renderTools(){
     if(panel.bar)traces.push({x:dailyX,y:panel.bar,type:"bar",name:panel.label,showlegend:false,marker:{color:panel.bar.map(v=>v>=0?"#16a34a":"#dc2626")},xaxis:`x${axis}`,yaxis:`y${axis}`,hovertemplate:"Steigung zum Vortag: %{y:.4f}<extra></extra>"});else panel.series.forEach((series,i)=>traces.push(...splitSigned(dailyX,series,axis,panel.series.length>1?(i?"Kurs - Lower Band":"Kurs - Upper Band"):panel.label)));
   });
   if(hasIntraday)layout[`xaxis${rightAxisStart}`]={...axisBase(intradayPoints),domain:rightDomain,range:intradayRange,anchor:`y${rightAxisStart}`,showticklabels:true,tickformat:"%H:%M",nticks:3,ticklabelposition:"inside bottom",tickfont:{family:"Arial, sans-serif",size:10,color:"#64748b"},showgrid:false,showline:false,ticks:""};for(let index=0;index<rows;index++){const suffix=index?`${index+1}`:"",leftX=suffix?`x${suffix}`:"x",yref=suffix?`y${suffix} domain`:"y domain";layout.shapes.push({name:`cross-panel-marker-left-${index+1}`,type:"line",xref:leftX,yref,x0:dailyX[0],x1:dailyX[0],y0:0,y1:1,line:{color:"rgba(37,99,235,.68)",width:1,dash:"dash"},layer:"above",visible:false});if(hasIntraday&&index===0)layout.shapes.push({name:"cross-panel-marker-right-1",type:"line",xref:`x${rightAxisStart}`,yref:`y${rightAxisStart} domain`,x0:intradayX[0],x1:intradayX[0],y0:0,y1:1,line:{color:"rgba(37,99,235,.68)",width:1,dash:"dash"},layer:"above",visible:false});}
-  window.__alignToolRangeCard=()=>alignToolRangeCard(hasIntraday);Plotly.react("toolsChart",traces,layout,PLOT_CONFIG).then(()=>{const graph=$("toolsChart")?.querySelector(".js-plotly-plot");if(graph){graph.__msciSymmetricCenters=hasIntraday?{[`yaxis${rightAxisStart}`]:previousClose}:{};graph.__msciIntradayAlignment=hasIntraday?{axisName:`yaxis${rightAxisStart}`,center:previousClose,historicalDomain}:null;}installCrossPanelHover("toolsChart");installVisibleYAutoscale("toolsChart");alignToolRangeCard(hasIntraday);});
+  window.__alignToolRangeCard=()=>alignToolRangeCard(hasIntraday);Plotly.react("toolsChart",traces,layout,PLOT_CONFIG).then(()=>{const graph=$("toolsChart")?.querySelector(".js-plotly-plot");if(graph)graph.__msciSymmetricCenters=hasIntraday?{[`yaxis${rightAxisStart}`]:previousClose}:{};installCrossPanelHover("toolsChart");installVisibleYAutoscale("toolsChart");alignToolRangeCard(hasIntraday);});
 }
 
 function tradeStoreKey(){ return `msci-world-trades-${instrumentKey()}`; }
@@ -231,7 +230,6 @@ async function fetchData(manual=false){ $("reload").disabled=true;try{const resp
 function initializeInstrument(){ const old=instrumentKey(), requested=new URLSearchParams(location.search).get("instrument"), select=$("instrument");select.innerHTML="";for(const[key,inst]of Object.entries(payload.instruments)){const option=document.createElement("option");option.value=key;option.textContent=inst.name;select.appendChild(option);}select.value=payload.instruments[old]?old:payload.instruments[requested]?requested:Object.keys(payload.instruments)[0]; }
 
 $("instrument").onchange=()=>{selectedTrade=null;renderAll();}; $("reload").onclick=()=>{if(confirm("Veröffentlichten Kursdatenstand jetzt neu laden?"))fetchData(true);};
-$("autoScaleZoom").onclick=()=>{autoScaleZoom=!autoScaleZoom;$("autoScaleZoom").classList.toggle("active",autoScaleZoom);$("autoScaleZoom").setAttribute("aria-pressed",String(autoScaleZoom));$("autoScaleZoom").textContent=autoScaleZoom?"Zoom + Auto-Y":"Zoom ohne Auto-Y";Plotly.relayout("toolsChart",{dragmode:"zoom"});};
 for(const id of PARAM_IDS) $(id).addEventListener("input",renderTools);
 $("saveDefaults").onclick=()=>{ const values={};for(const id of PARAM_IDS)values[id]=$(id).type==="checkbox"?$(id).checked:$(id).value;localStorage.setItem("msci-world-defaults",JSON.stringify(values));$("settingsMessage").textContent="Parameter wurden als Standardwerte für diesen Browser gespeichert.";};
 document.querySelectorAll(".tab").forEach(button=>button.onclick=()=>{activeTab=button.dataset.tab;document.querySelectorAll(".tab").forEach(b=>b.classList.toggle("active",b===button));$("toolsTab").classList.toggle("hidden",activeTab!=="tools");$("analyticsTab").classList.toggle("hidden",activeTab!=="analytics");setTimeout(()=>Plotly.Plots.resize(activeTab==="tools"?"toolsChart":"analyticsChart"),0);});
