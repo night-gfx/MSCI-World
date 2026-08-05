@@ -131,6 +131,16 @@ function toolsSeries(){
   const uniqueToday=[...new Map(today.map(point=>[point[0],point])).values()].sort((a,b)=>a[0]-b[0]);byDay.delete(sessionDay);const history=[...byDay.values()].sort((a,b)=>a[0]-b[0]),latest=uniqueToday.at(-1),display=[...history,...uniqueToday],start=uniqueToday[0][0],end=Math.max(latest[0],start+300000);return {display,daily:history,intraday:uniqueToday,intradayRange:[start,end]};
 }
 function toolsHoverLabel(value){const date=new Date(value),hasTime=date.getUTCHours()!==0||date.getUTCMinutes()!==0;return hasTime?date.toLocaleString("de-DE",{day:"2-digit",month:"2-digit",year:"numeric",hour:"2-digit",minute:"2-digit"}):date.toLocaleDateString("de-DE");}
+const INTRADAY_SESSIONS={
+  "LWLD.PA":{timeZone:"Europe/Paris",closeHour:17,closeMinute:30},
+  "IQQW.DE":{timeZone:"Europe/Berlin",closeHour:17,closeMinute:30},
+  "CO2.L":{timeZone:"Europe/London",closeHour:16,closeMinute:30}
+};
+function zonedSessionTimestamp(reference,timeZone,hour,minute){
+  const formatter=new Intl.DateTimeFormat("en-CA",{timeZone,year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit",second:"2-digit",hourCycle:"h23"}),parts=Object.fromEntries(formatter.formatToParts(new Date(reference)).filter(part=>part.type!=="literal").map(part=>[part.type,+part.value]));
+  const target=Date.UTC(parts.year,parts.month-1,parts.day,hour,minute),wallAtGuess=Date.UTC(parts.year,parts.month-1,parts.day,parts.hour,parts.minute,parts.second);return target+(reference-wallAtGuess);
+}
+function intradaySessionEnd(instrument,reference){const session=INTRADAY_SESSIONS[instrument.ticker]||{timeZone:"Europe/Berlin",closeHour:17,closeMinute:30};return zonedSessionTimestamp(reference,session.timeZone,session.closeHour,session.closeMinute);}
 function alignToolRangeCard(hasIntraday){
   const graph=$("toolsChart"),card=document.querySelector(".time-range-card"),size=graph?._fullLayout?._size;if(!graph||!card||!size)return;
   if(!hasIntraday){card.style.right="12px";return;}
@@ -159,7 +169,7 @@ function renderTools(){
     traces.push(...splitTrend(dailyX,k,"Kalman 2D"));const fullBar=fullK.map((value,index)=>index?value-fullK[index-1]:null);panels.push({label:"Kalman-Steigung zum Vortag",color:"#db2777",bar:fullBar.slice(dailyStart),intradayBar:intradayX.map(()=>0)});
   }
   if(instrumentKey()===Object.keys(payload.instruments)[0])for(const t of loadTrades()){const entryTime=new Date(t.entryDate).getTime();if(entryTime>=xRange[0].getTime()&&entryTime<=xRange[1].getTime())traces.push({x:[new Date(t.entryDate)],y:[t.entryPrice],type:"scatter",mode:"markers",name:"Kauf",showlegend:false,hoverinfo:"skip",marker:{symbol:"triangle-up",size:11,color:"#16a34a",line:{width:1.2,color:"#fff"}}});if(t.exitDate){const exitTime=new Date(t.exitDate).getTime();if(exitTime>=xRange[0].getTime()&&exitTime<=xRange[1].getTime())traces.push({x:[new Date(t.exitDate)],y:[t.exitPrice],type:"scatter",mode:"markers",name:"Verkauf",showlegend:false,hoverinfo:"skip",marker:{symbol:"triangle-down",size:11,color:"#dc2626",line:{width:1.2,color:"#fff"}}});}}
-  const rows=1+panels.length,total=420+panels.length*105,main=420/total,small=105/total,leftDomain=hasIntraday?[0,.85]:[0,1],rightDomain=[.85,1],rightAxisStart=rows+1,intradayRange=hasIntraday?[new Date(intradayPoints[0][0]-300000),new Date(intradayPoints.at(-1)[0]+300000)]:null,previousClose=visibleDailyY.at(-1);
+  const rows=1+panels.length,total=420+panels.length*105,main=420/total,small=105/total,leftDomain=hasIntraday?[0,.85]:[0,1],rightDomain=[.85,1],rightAxisStart=rows+1,intradayEnd=hasIntraday?intradaySessionEnd(currentInstrument(),intradayPoints[0][0]):null,intradayRange=hasIntraday?[new Date(intradayPoints[0][0]),new Date(Math.max(intradayEnd,intradayPoints[0][0]+300000))]:null,previousClose=visibleDailyY.at(-1);
   if(hasIntraday){traces.push(...splitPriceAroundClose(intradayX,intradayY,rightAxisStart,previousClose));traces.push({x:intradayX,y:intradayY,type:"scatter",mode:"markers",xaxis:`x${rightAxisStart}`,yaxis:"y",meta:"intraday-extension",showlegend:false,marker:{size:intradayX.length===1?7:9,color:intradayX.length===1?"#000":"rgba(0,0,0,0)",line:{color:"#000",width:intradayX.length===1?1:0}},customdata:intradayPoints.map(point=>toolsHoverLabel(point[0])),hovertemplate:"%{customdata}<br>Intraday-Kurs: %{y:.4f}<extra></extra>"});}
   const chartHeight=total+114;$("toolsChart").style.height=`${chartHeight}px`;$("toolsChart").style.minHeight=`${chartHeight}px`;
   const layout={...baseLayout(),height:chartHeight,showlegend:false,hoversubplots:"axis",margin:{l:48,r:88,t:72,b:42},xaxis:{...axisBase(dailyFull),domain:leftDomain,range:xRange,anchor:"y",showticklabels:false,hoverformat:"%d.%m.%Y"},yaxis:{domain:[1-main,1],range:paddedRange(traces.filter(t=>(t.yaxis||"y")==="y").map(t=>t.y||[])),showgrid:false,showline:false,zeroline:false,tickformat:".3f",tickfont:{size:10,color:"#64748b"},automargin:true},bargap:.06,annotations:[],shapes:[]};
