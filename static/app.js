@@ -118,32 +118,39 @@ function installVisibleYAutoscale(graphId){
   graph.on("plotly_relayout",graph.__msciRelayoutHandler);
 }
 const PLOT_CONFIG={responsive:true,displaylogo:false,modeBarButtonsToAdd:["drawline","drawopenpath","eraseshape","resetScale2d"]};
-function toolsPoints(){const inst=currentInstrument(),byDay=new Map();for(const point of inst.daily){const day=dateKey(point[0]);byDay.set(day,[Date.parse(`${day}T00:00:00Z`),+point[1]]);}if(inst.last_price&&Number.isFinite(+inst.last_price[1])){const day=dateKey(inst.last_price[0]);byDay.set(day,[Date.parse(`${day}T00:00:00Z`),+inst.last_price[1]]);}return [...byDay.values()].sort((a,b)=>a[0]-b[0]);}
+function toolsSeries(){
+  const inst=currentInstrument(),byDay=new Map();for(const point of inst.daily){const day=dateKey(point[0]);byDay.set(day,[Date.parse(`${day}T00:00:00Z`),+point[1]]);}
+  const intraday=[...(inst.intraday||[])].filter(point=>Number.isFinite(+point[0])&&Number.isFinite(+point[1])).sort((a,b)=>a[0]-b[0]),updatedDay=dateKey(payload.updated_at),sessionDay=intraday.length?dateKey(intraday.at(-1)[0]):null,currentSession=sessionDay===updatedDay;
+  if(!currentSession){const daily=[...byDay.values()].sort((a,b)=>a[0]-b[0]);return {display:daily,daily};}
+  const today=intraday.filter(point=>dateKey(point[0])===sessionDay).map(point=>[+point[0],+point[1]]);if(inst.last_price&&dateKey(inst.last_price[0])===sessionDay&&Number.isFinite(+inst.last_price[1]))today.push([+inst.last_price[0],+inst.last_price[1]]);
+  const uniqueToday=[...new Map(today.map(point=>[point[0],point])).values()].sort((a,b)=>a[0]-b[0]);byDay.delete(sessionDay);const history=[...byDay.values()].sort((a,b)=>a[0]-b[0]),latest=uniqueToday.at(-1),daily=[...history,latest],display=[...history,...uniqueToday];return {display,daily};
+}
+function toolsHoverLabel(value){const date=new Date(value),hasTime=date.getUTCHours()!==0||date.getUTCMinutes()!==0;return hasTime?date.toLocaleString("de-DE",{day:"2-digit",month:"2-digit",year:"numeric",hour:"2-digit",minute:"2-digit"}):date.toLocaleDateString("de-DE");}
 
 function renderTools(){
-  const fullPoints=toolsPoints(),fullY=pointPrices(fullPoints),points=filterRange(fullPoints,toolRange),startIndex=fullPoints.findIndex(p=>p[0]===points[0][0]),x=pointDates(points),y=pointPrices(points),xRange=[new Date(points[0][0]),new Date(points.at(-1)[0])];
-  const traces=[{...lineTrace(x,y,currentInstrument().name,"#0f172a","solid",1,2.5),hovertemplate:`${currentInstrument().name}: %{y:.4f}<extra></extra>`}], panels=[];
+  const source=toolsSeries(),fullPoints=source.display,dailyFull=source.daily,dailyY=pointPrices(dailyFull),points=filterRange(fullPoints,toolRange),dailyPoints=filterRange(dailyFull,toolRange),dailyStart=dailyFull.findIndex(p=>p[0]===dailyPoints[0][0]),x=pointDates(points),y=pointPrices(points),dailyX=pointDates(dailyPoints),visibleDailyY=pointPrices(dailyPoints),xRange=[new Date(points[0][0]),new Date(points.at(-1)[0])];
+  const traces=[{...lineTrace(x,y,currentInstrument().name,"#0f172a","solid",1,2.5),customdata:points.map(point=>toolsHoverLabel(point[0])),hovertemplate:`%{customdata}<br>${currentInstrument().name}: %{y:.4f}<extra></extra>`}], panels=[];
   if($("showBollinger").checked){
-    const fullBands=rolling(fullY,Math.max(2,+$("bollingerWindow").value||20),Math.max(.1,+$("bollingerStd").value||2)),bands={mid:fullBands.mid.slice(startIndex),upper:fullBands.upper.slice(startIndex),lower:fullBands.lower.slice(startIndex)};
-    traces.push({...lineTrace(x,bands.upper,"Bollinger Upper","#60a5fa","dot",1,1.2),hoverinfo:"skip"});
-    traces.push({...lineTrace(x,bands.lower,"Bollinger Lower","#60a5fa","dot",1,1.2),hoverinfo:"skip",fill:"tonexty",fillcolor:"rgba(59,130,246,.08)"});
-    traces.push({...lineTrace(x,bands.mid,"Bollinger Mittelwert","#2563eb","solid",1,1.4),hoverinfo:"skip"});
-    panels.push({label:"Bollinger Bands",color:"#2563eb",series:[y.map((v,i)=>bands.upper[i]==null?null:v-bands.upper[i]),y.map((v,i)=>bands.lower[i]==null?null:v-bands.lower[i])]});
+    const fullBands=rolling(dailyY,Math.max(2,+$("bollingerWindow").value||20),Math.max(.1,+$("bollingerStd").value||2)),bands={mid:fullBands.mid.slice(dailyStart),upper:fullBands.upper.slice(dailyStart),lower:fullBands.lower.slice(dailyStart)};
+    traces.push({...lineTrace(dailyX,bands.upper,"Bollinger Upper","#60a5fa","dot",1,1.2),hoverinfo:"skip"});
+    traces.push({...lineTrace(dailyX,bands.lower,"Bollinger Lower","#60a5fa","dot",1,1.2),hoverinfo:"skip",fill:"tonexty",fillcolor:"rgba(59,130,246,.08)"});
+    traces.push({...lineTrace(dailyX,bands.mid,"Bollinger Mittelwert","#2563eb","solid",1,1.4),hoverinfo:"skip"});
+    panels.push({x:dailyX,label:"Bollinger Bands",color:"#2563eb",series:[visibleDailyY.map((v,i)=>bands.upper[i]==null?null:v-bands.upper[i]),visibleDailyY.map((v,i)=>bands.lower[i]==null?null:v-bands.lower[i])]});
   }
   if($("showRegression").checked){
     for(const [id,label] of [["regShort","Kurz"],["regMedium","Mittel"],["regLong","Lang"]]){
-      const n=Math.max(2,+$(id).value||2), reg=regression(fullPoints,n).slice(startIndex);
+      const n=Math.max(2,+$(id).value||2), reg=regression(dailyFull,n).slice(dailyStart);
       const period={182:"6 Monate",365:"1 Jahr",730:"2 Jahre",1825:"5 Jahre"}[n]||`${n} Tage`;
-      traces.push({...lineTrace(x,reg,`Regression ${period}`,"#7c3aed","dash",1,2.1),hoverinfo:"skip"});
-      panels.push({label:`Regression ${period}`,color:"#7c3aed",series:[y.map((v,i)=>reg[i]==null?null:v-reg[i])]});
-      const last=reg.findLastIndex(Number.isFinite);if(last>=0)panels.at(-1).endpoint={x:x[last],y:reg[last],text:period};
+      traces.push({...lineTrace(dailyX,reg,`Regression ${period}`,"#7c3aed","dash",1,2.1),hoverinfo:"skip"});
+      panels.push({x:dailyX,label:`Regression ${period}`,color:"#7c3aed",series:[visibleDailyY.map((v,i)=>reg[i]==null?null:v-reg[i])]});
+      const last=reg.findLastIndex(Number.isFinite);if(last>=0)panels.at(-1).endpoint={x:dailyX[last],y:reg[last],text:period};
     }
   }
   if($("showKalman").checked){
-    const fullK=kalman2d(fullPoints,Math.max(.001,+$("kalmanQ").value||1),Math.max(.001,+$("kalmanR").value||25)),k=fullK.slice(startIndex);
-    traces.push(...splitTrend(x,k,"Kalman 2D"));
-    const fullBar=Array(fullK.length).fill(null),lastByDay=new Map();fullPoints.forEach((p,i)=>lastByDay.set(dateKey(p[0]),i));const dailyIndexes=[...lastByDay.values()];dailyIndexes.forEach((idx,i)=>{if(i)fullBar[idx]=fullK[idx]-fullK[dailyIndexes[i-1]];});const bar=fullBar.slice(startIndex);
-    panels.push({label:"Kalman-Steigung zum Vortag",color:"#db2777",bar});
+    const fullK=kalman2d(dailyFull,Math.max(.001,+$("kalmanQ").value||1),Math.max(.001,+$("kalmanR").value||25)),k=fullK.slice(dailyStart);
+    traces.push(...splitTrend(dailyX,k,"Kalman 2D"));
+    const fullBar=fullK.map((value,index)=>index?value-fullK[index-1]:null),bar=fullBar.slice(dailyStart);
+    panels.push({x:dailyX,label:"Kalman-Steigung zum Vortag",color:"#db2777",bar});
   }
   if(instrumentKey()===Object.keys(payload.instruments)[0])for(const t of loadTrades()){const entryTime=new Date(t.entryDate).getTime();if(entryTime>=xRange[0].getTime()&&entryTime<=xRange[1].getTime())traces.push({x:[new Date(t.entryDate)],y:[t.entryPrice],type:"scatter",mode:"markers",name:"Kauf",showlegend:false,hoverinfo:"skip",marker:{symbol:"triangle-up",size:11,color:"#16a34a",line:{width:1.2,color:"#fff"}}});if(t.exitDate){const exitTime=new Date(t.exitDate).getTime();if(exitTime>=xRange[0].getTime()&&exitTime<=xRange[1].getTime())traces.push({x:[new Date(t.exitDate)],y:[t.exitPrice],type:"scatter",mode:"markers",name:"Verkauf",showlegend:false,hoverinfo:"skip",marker:{symbol:"triangle-down",size:11,color:"#dc2626",line:{width:1.2,color:"#fff"}}});}}
   const rows=1+panels.length,total=420+panels.length*105,main=420/total,small=105/total;
@@ -151,13 +158,13 @@ function renderTools(){
   const layout={...baseLayout(),height:chartHeight,showlegend:false,hoversubplots:"axis",margin:{l:48,r:88,t:72,b:42},xaxis:{...axisBase(fullPoints),range:xRange,anchor:"y",showticklabels:false,hoverformat:"%d.%m.%Y"},yaxis:{domain:[1-main,1],range:paddedRange(traces.filter(t=>!t.yaxis||t.yaxis==="y").map(t=>t.y||[])),showgrid:false,showline:false,zeroline:false,tickformat:".3f",tickfont:{size:10,color:"#64748b"},automargin:true},bargap:.06,annotations:[],shapes:[]};
   for(const panel of panels)if(panel.endpoint)layout.annotations.push({x:panel.endpoint.x,y:panel.endpoint.y,xref:"x",yref:"y",text:panel.endpoint.text,showarrow:false,xanchor:"left",yanchor:"middle",xshift:7,font:{family:"Arial, sans-serif",size:10,color:panel.color},bgcolor:"rgba(255,255,255,.88)",borderpad:2});
   panels.forEach((panel,index)=>{
-    const axis=index+2, top=1-main-index*small, bottom=Math.max(0,top-small);
+    const axis=index+2, panelX=panel.x,top=1-main-index*small, bottom=Math.max(0,top-small);
     layout[`xaxis${axis}`]={...axisBase(fullPoints),range:xRange,anchor:`y${axis}`,matches:"x",showticklabels:index===panels.length-1,hoverformat:"%d.%m.%Y"};
     layout[`yaxis${axis}`]={domain:[bottom,top],range:paddedRange(panel.bar?[panel.bar]:panel.series,true),showgrid:false,showline:false,zeroline:false,showticklabels:false,ticks:""};
     layout.shapes.push({type:"line",xref:"paper",x0:0,x1:1,yref:`y${axis}`,y0:0,y1:0,line:{color:"#111827",width:.55},layer:"above"});
     layout.annotations.push({xref:"paper",yref:`y${axis}`,x:.006,y:0,text:panel.label,showarrow:false,xanchor:"left",yanchor:"bottom",yshift:3,font:{family:"Arial, sans-serif",size:10,color:panel.color},opacity:.52});
-    if(panel.bar){ traces.push({x,y:panel.bar,type:"bar",name:panel.label,showlegend:false,marker:{color:panel.bar.map(v=>v>=0?"#16a34a":"#dc2626")},xaxis:`x${axis}`,yaxis:`y${axis}`,hovertemplate:"Steigung zum Vortag: %{y:.4f}<extra></extra>"}); }
-    else panel.series.forEach((series,i)=>traces.push(...splitSigned(x,series,axis,panel.series.length>1?(i?"Kurs - Lower Band":"Kurs - Upper Band"):panel.label)));
+    if(panel.bar){ traces.push({x:panelX,y:panel.bar,type:"bar",name:panel.label,showlegend:false,marker:{color:panel.bar.map(v=>v>=0?"#16a34a":"#dc2626")},xaxis:`x${axis}`,yaxis:`y${axis}`,hovertemplate:"Steigung zum Vortag: %{y:.4f}<extra></extra>"}); }
+    else panel.series.forEach((series,i)=>traces.push(...splitSigned(panelX,series,axis,panel.series.length>1?(i?"Kurs - Lower Band":"Kurs - Upper Band"):panel.label)));
   });
   layout.shapes.push({name:"cross-panel-marker",type:"line",xref:"x",yref:"paper",x0:x[0],x1:x[0],y0:0,y1:1,line:{color:"rgba(37,99,235,.68)",width:1,dash:"dash"},layer:"above",visible:false});
   Plotly.react("toolsChart",traces,layout,PLOT_CONFIG).then(()=>{installCrossPanelHover("toolsChart");installVisibleYAutoscale("toolsChart");});
