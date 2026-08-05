@@ -109,7 +109,7 @@ function installVisibleYAutoscale(graphId){
       const suffix=axisName.slice(5),traceAxis=suffix?`y${suffix}`:"y",values=[];
       for(const trace of graph.data){
         if((trace.yaxis||"y")!==traceAxis||!Array.isArray(trace.x)||!Array.isArray(trace.y))continue;
-        trace.y.forEach((value,index)=>{const timestamp=new Date(trace.x[index]).getTime(),numeric=+value;if(Number.isFinite(timestamp)&&timestamp>=start&&timestamp<=end&&Number.isFinite(numeric))values.push(numeric);});
+        trace.y.forEach((value,index)=>{const timestamp=new Date(trace.x[index]).getTime(),numeric=+value,intraday=trace.meta==="intraday-extension";if(Number.isFinite(numeric)&&(intraday||(Number.isFinite(timestamp)&&timestamp>=start&&timestamp<=end)))values.push(numeric);});
       }
       const range=paddedRange([values],graphId==="toolsChart"&&axisName!=="yaxis");if(range)updates[`${axisName}.range`]=range;
     }
@@ -128,49 +128,41 @@ function toolsSeries(){
 function toolsHoverLabel(value){const date=new Date(value),hasTime=date.getUTCHours()!==0||date.getUTCMinutes()!==0;return hasTime?date.toLocaleString("de-DE",{day:"2-digit",month:"2-digit",year:"numeric",hour:"2-digit",minute:"2-digit"}):date.toLocaleDateString("de-DE");}
 
 function renderTools(){
-  const source=toolsSeries(),fullPoints=source.display,dailyFull=source.daily,dailyY=pointPrices(dailyFull),points=filterRange(fullPoints,toolRange),dailyPoints=filterRange(dailyFull,toolRange),dailyStart=dailyFull.findIndex(p=>p[0]===dailyPoints[0][0]),intradayPoints=source.intraday.filter(point=>point[0]>=points[0][0]),x=pointDates(points),y=pointPrices(points),dailyX=pointDates(dailyPoints),visibleDailyY=pointPrices(dailyPoints),intradayX=pointDates(intradayPoints),intradayY=pointPrices(intradayPoints),xRange=[new Date(points[0][0]),new Date(points.at(-1)[0])];
-  const extendFilter=values=>{const last=values.findLast(Number.isFinite);return {x:[...dailyX,...intradayX],values:[...values,...intradayX.map(()=>last)],last};};
-  const filterDifference=(values,last)=>[...visibleDailyY.map((price,index)=>Number.isFinite(values[index])?price-values[index]:null),...intradayY.map(price=>Number.isFinite(last)?price-last:null)];
-  const traces=[{...lineTrace(x,y,currentInstrument().name,"#0f172a","solid",1,2.5),customdata:points.map(point=>toolsHoverLabel(point[0])),hovertemplate:`%{customdata}<br>${currentInstrument().name}: %{y:.4f}<extra></extra>`}], panels=[];
+  const source=toolsSeries(),dailyFull=source.daily,dailyY=pointPrices(dailyFull),dailyPoints=filterRange(dailyFull,toolRange),dailyStart=dailyFull.findIndex(point=>point[0]===dailyPoints[0][0]),dailyX=pointDates(dailyPoints),visibleDailyY=pointPrices(dailyPoints),intradayPoints=source.intraday,intradayX=pointDates(intradayPoints),intradayY=pointPrices(intradayPoints),hasIntraday=intradayPoints.length>0,xRange=[new Date(dailyPoints[0][0]),new Date(dailyPoints.at(-1)[0])];
+  const lastFinite=values=>values.findLast(Number.isFinite),historicalDifference=values=>visibleDailyY.map((price,index)=>Number.isFinite(values[index])?price-values[index]:null),intradayDifference=last=>intradayY.map(price=>Number.isFinite(last)?price-last:null);
+  const traces=[{...lineTrace(dailyX,visibleDailyY,currentInstrument().name,"#0f172a","solid",1,2.5),customdata:dailyPoints.map(point=>toolsHoverLabel(point[0])),hovertemplate:`%{customdata}<br>${currentInstrument().name}: %{y:.4f}<extra></extra>`}],panels=[];
   if($("showBollinger").checked){
     const fullBands=rolling(dailyY,Math.max(2,+$("bollingerWindow").value||20),Math.max(.1,+$("bollingerStd").value||2)),bands={mid:fullBands.mid.slice(dailyStart),upper:fullBands.upper.slice(dailyStart),lower:fullBands.lower.slice(dailyStart)};
-    const upper=extendFilter(bands.upper),lower=extendFilter(bands.lower),middle=extendFilter(bands.mid);
-    traces.push({...lineTrace(upper.x,upper.values,"Bollinger Upper","#60a5fa","dot",1,1.2),hoverinfo:"skip"});
-    traces.push({...lineTrace(lower.x,lower.values,"Bollinger Lower","#60a5fa","dot",1,1.2),hoverinfo:"skip",fill:"tonexty",fillcolor:"rgba(59,130,246,.08)"});
-    traces.push({...lineTrace(middle.x,middle.values,"Bollinger Mittelwert","#2563eb","solid",1,1.4),hoverinfo:"skip"});
-    panels.push({x:upper.x,label:"Bollinger Bands",color:"#2563eb",series:[filterDifference(bands.upper,upper.last),filterDifference(bands.lower,lower.last)]});
+    traces.push({...lineTrace(dailyX,bands.upper,"Bollinger Upper","#60a5fa","dot",1,1.2),hoverinfo:"skip"});traces.push({...lineTrace(dailyX,bands.lower,"Bollinger Lower","#60a5fa","dot",1,1.2),hoverinfo:"skip",fill:"tonexty",fillcolor:"rgba(59,130,246,.08)"});traces.push({...lineTrace(dailyX,bands.mid,"Bollinger Mittelwert","#2563eb","solid",1,1.4),hoverinfo:"skip"});
+    const upperLast=lastFinite(bands.upper),lowerLast=lastFinite(bands.lower);panels.push({label:"Bollinger Bands",color:"#2563eb",series:[historicalDifference(bands.upper),historicalDifference(bands.lower)],intradaySeries:[intradayDifference(upperLast),intradayDifference(lowerLast)]});
   }
   if($("showRegression").checked){
     for(const [id,label] of [["regShort","Kurz"],["regMedium","Mittel"],["regLong","Lang"]]){
       const n=Math.max(2,+$(id).value||2), reg=regression(dailyFull,n).slice(dailyStart);
       const period={182:"6 Monate",365:"1 Jahr",730:"2 Jahre",1825:"5 Jahre"}[n]||`${n} Tage`;
-      const extended=extendFilter(reg);traces.push({...lineTrace(extended.x,extended.values,`Regression ${period}`,"#7c3aed","dash",1,2.1),hoverinfo:"skip"});
-      panels.push({x:extended.x,label:`Regression ${period}`,color:"#7c3aed",series:[filterDifference(reg,extended.last)]});
-      if(Number.isFinite(extended.last))panels.at(-1).endpoint={x:extended.x.at(-1),y:extended.last,text:period};
+      const last=lastFinite(reg);traces.push({...lineTrace(dailyX,reg,`Regression ${period}`,"#7c3aed","dash",1,2.1),hoverinfo:"skip"});panels.push({label:`Regression ${period}`,color:"#7c3aed",series:[historicalDifference(reg)],intradaySeries:[intradayDifference(last)]});if(Number.isFinite(last))panels.at(-1).endpoint={x:dailyX.at(-1),y:last,text:period};
     }
   }
   if($("showKalman").checked){
     const fullK=kalman2d(dailyFull,Math.max(.001,+$("kalmanQ").value||1),Math.max(.001,+$("kalmanR").value||25)),k=fullK.slice(dailyStart);
-    const extended=extendFilter(k);traces.push(...splitTrend(extended.x,extended.values,"Kalman 2D"));
-    const fullBar=fullK.map((value,index)=>index?value-fullK[index-1]:null),bar=[...fullBar.slice(dailyStart),...intradayX.map(()=>0)];
-    panels.push({x:extended.x,label:"Kalman-Steigung zum Vortag",color:"#db2777",bar});
+    traces.push(...splitTrend(dailyX,k,"Kalman 2D"));const fullBar=fullK.map((value,index)=>index?value-fullK[index-1]:null);panels.push({label:"Kalman-Steigung zum Vortag",color:"#db2777",bar:fullBar.slice(dailyStart),intradayBar:intradayX.map(()=>0)});
   }
   if(instrumentKey()===Object.keys(payload.instruments)[0])for(const t of loadTrades()){const entryTime=new Date(t.entryDate).getTime();if(entryTime>=xRange[0].getTime()&&entryTime<=xRange[1].getTime())traces.push({x:[new Date(t.entryDate)],y:[t.entryPrice],type:"scatter",mode:"markers",name:"Kauf",showlegend:false,hoverinfo:"skip",marker:{symbol:"triangle-up",size:11,color:"#16a34a",line:{width:1.2,color:"#fff"}}});if(t.exitDate){const exitTime=new Date(t.exitDate).getTime();if(exitTime>=xRange[0].getTime()&&exitTime<=xRange[1].getTime())traces.push({x:[new Date(t.exitDate)],y:[t.exitPrice],type:"scatter",mode:"markers",name:"Verkauf",showlegend:false,hoverinfo:"skip",marker:{symbol:"triangle-down",size:11,color:"#dc2626",line:{width:1.2,color:"#fff"}}});}}
-  const rows=1+panels.length,total=420+panels.length*105,main=420/total,small=105/total;
+  const rows=1+panels.length,total=420+panels.length*105,main=420/total,small=105/total,leftDomain=hasIntraday?[0,.83]:[0,1],rightDomain=[.86,1],rightAxisStart=rows+1,intradayRange=hasIntraday?[new Date(intradayPoints[0][0]-300000),new Date(intradayPoints.at(-1)[0]+300000)]:null;
+  if(hasIntraday)traces.push({...lineTrace(intradayX,intradayY,"Heute · 5 Minuten","#0f172a","solid",rightAxisStart,2.5),yaxis:"y",meta:"intraday-extension",customdata:intradayPoints.map(point=>toolsHoverLabel(point[0])),hovertemplate:"%{customdata}<br>Intraday: %{y:.4f}<extra></extra>",showlegend:false});
   const chartHeight=total+114;$("toolsChart").style.height=`${chartHeight}px`;$("toolsChart").style.minHeight=`${chartHeight}px`;
-  const layout={...baseLayout(),height:chartHeight,showlegend:false,hoversubplots:"axis",margin:{l:48,r:88,t:72,b:42},xaxis:{...axisBase(fullPoints),range:xRange,anchor:"y",showticklabels:false,hoverformat:"%d.%m.%Y"},yaxis:{domain:[1-main,1],range:paddedRange(traces.filter(t=>!t.yaxis||t.yaxis==="y").map(t=>t.y||[])),showgrid:false,showline:false,zeroline:false,tickformat:".3f",tickfont:{size:10,color:"#64748b"},automargin:true},bargap:.06,annotations:[],shapes:[]};
-  if(source.intradayRange)layout.shapes.push({name:"intraday-background",type:"rect",xref:"x",yref:"paper",x0:new Date(source.intradayRange[0]),x1:new Date(source.intradayRange[1]),y0:0,y1:1,fillcolor:"rgba(100,116,139,.11)",line:{width:0},layer:"below"});
+  const layout={...baseLayout(),height:chartHeight,showlegend:false,hoversubplots:"axis",margin:{l:48,r:88,t:72,b:42},xaxis:{...axisBase(dailyFull),domain:leftDomain,range:xRange,anchor:"y",showticklabels:false,hoverformat:"%d.%m.%Y"},yaxis:{domain:[1-main,1],range:paddedRange(traces.filter(t=>(t.yaxis||"y")==="y").map(t=>t.y||[])),showgrid:false,showline:false,zeroline:false,tickformat:".3f",tickfont:{size:10,color:"#64748b"},automargin:true},bargap:.06,annotations:[],shapes:[]};
+  if(hasIntraday){layout.shapes.push({name:"intraday-background",type:"rect",xref:"paper",yref:"paper",x0:.85,x1:1,y0:0,y1:1,fillcolor:"rgba(100,116,139,.11)",line:{width:0},layer:"below"});layout.shapes.push({type:"line",xref:"paper",yref:"paper",x0:.845,x1:.845,y0:0,y1:1,line:{color:"rgba(100,116,139,.38)",width:1,dash:"dot"},layer:"above"});}
   for(const panel of panels)if(panel.endpoint)layout.annotations.push({x:panel.endpoint.x,y:panel.endpoint.y,xref:"x",yref:"y",text:panel.endpoint.text,showarrow:false,xanchor:"left",yanchor:"middle",xshift:7,font:{family:"Arial, sans-serif",size:10,color:panel.color},bgcolor:"rgba(255,255,255,.88)",borderpad:2});
   panels.forEach((panel,index)=>{
-    const axis=index+2, panelX=panel.x,top=1-main-index*small, bottom=Math.max(0,top-small);
-    layout[`xaxis${axis}`]={...axisBase(fullPoints),range:xRange,anchor:`y${axis}`,matches:"x",showticklabels:index===panels.length-1,hoverformat:"%d.%m.%Y"};
-    layout[`yaxis${axis}`]={domain:[bottom,top],range:paddedRange(panel.bar?[panel.bar]:panel.series,true),showgrid:false,showline:false,zeroline:false,showticklabels:false,ticks:""};
+    const axis=index+2,rightAxis=rightAxisStart+index+1,top=1-main-index*small,bottom=Math.max(0,top-small),allPanelValues=panel.bar?[panel.bar,panel.intradayBar]:[...panel.series,...panel.intradaySeries];
+    layout[`xaxis${axis}`]={...axisBase(dailyFull),domain:leftDomain,range:xRange,anchor:`y${axis}`,matches:"x",showticklabels:index===panels.length-1,hoverformat:"%d.%m.%Y"};layout[`yaxis${axis}`]={domain:[bottom,top],range:paddedRange(allPanelValues,true),showgrid:false,showline:false,zeroline:false,showticklabels:false,ticks:""};
     layout.shapes.push({type:"line",xref:"paper",x0:0,x1:1,yref:`y${axis}`,y0:0,y1:0,line:{color:"#111827",width:.55},layer:"above"});
     layout.annotations.push({xref:"paper",yref:`y${axis}`,x:.006,y:0,text:panel.label,showarrow:false,xanchor:"left",yanchor:"bottom",yshift:3,font:{family:"Arial, sans-serif",size:10,color:panel.color},opacity:.52});
-    if(panel.bar){ traces.push({x:panelX,y:panel.bar,type:"bar",name:panel.label,showlegend:false,marker:{color:panel.bar.map(v=>v>=0?"#16a34a":"#dc2626")},xaxis:`x${axis}`,yaxis:`y${axis}`,hovertemplate:"Steigung zum Vortag: %{y:.4f}<extra></extra>"}); }
-    else panel.series.forEach((series,i)=>traces.push(...splitSigned(panelX,series,axis,panel.series.length>1?(i?"Kurs - Lower Band":"Kurs - Upper Band"):panel.label)));
+    if(panel.bar)traces.push({x:dailyX,y:panel.bar,type:"bar",name:panel.label,showlegend:false,marker:{color:panel.bar.map(v=>v>=0?"#16a34a":"#dc2626")},xaxis:`x${axis}`,yaxis:`y${axis}`,hovertemplate:"Steigung zum Vortag: %{y:.4f}<extra></extra>"});else panel.series.forEach((series,i)=>traces.push(...splitSigned(dailyX,series,axis,panel.series.length>1?(i?"Kurs - Lower Band":"Kurs - Upper Band"):panel.label)));
+    if(hasIntraday){layout[`xaxis${rightAxis}`]={...axisBase(intradayPoints),domain:rightDomain,range:intradayRange,anchor:`y${axis}`,matches:rightAxis===rightAxisStart?undefined:`x${rightAxisStart}`,showticklabels:false,showgrid:false,showline:false,ticks:""};if(panel.bar)traces.push({x:intradayX,y:panel.intradayBar,type:"bar",showlegend:false,meta:"intraday-extension",marker:{color:panel.intradayBar.map(v=>v>=0?"#16a34a":"#dc2626")},xaxis:`x${rightAxis}`,yaxis:`y${axis}`,hovertemplate:"Intraday-Steigung: %{y:.4f}<extra></extra>"});else panel.intradaySeries.forEach((series,i)=>{const rightTraces=splitSigned(intradayX,series,axis,panel.intradaySeries.length>1?(i?"Intraday - Lower Band":"Intraday - Upper Band"):panel.label);rightTraces.forEach(trace=>{trace.xaxis=`x${rightAxis}`;trace.meta="intraday-extension";traces.push(trace);});});}
   });
-  for(let index=0;index<rows;index++){const suffix=index?`${index+1}`:"";layout.shapes.push({name:`cross-panel-marker-${index+1}`,type:"line",xref:suffix?`x${suffix}`:"x",yref:suffix?`y${suffix} domain`:"y domain",x0:x[0],x1:x[0],y0:0,y1:1,line:{color:"rgba(37,99,235,.68)",width:1,dash:"dash"},layer:"above",visible:false});}
+  if(hasIntraday)layout[`xaxis${rightAxisStart}`]={...axisBase(intradayPoints),domain:rightDomain,range:intradayRange,anchor:"y",showticklabels:false,showgrid:false,showline:false,ticks:""};for(let index=0;index<rows;index++){const suffix=index?`${index+1}`:"",leftX=suffix?`x${suffix}`:"x",yref=suffix?`y${suffix} domain`:"y domain";layout.shapes.push({name:`cross-panel-marker-left-${index+1}`,type:"line",xref:leftX,yref,x0:dailyX[0],x1:dailyX[0],y0:0,y1:1,line:{color:"rgba(37,99,235,.68)",width:1,dash:"dash"},layer:"above",visible:false});if(hasIntraday){const rightAxis=rightAxisStart+index;layout.shapes.push({name:`cross-panel-marker-right-${index+1}`,type:"line",xref:`x${rightAxis}`,yref,x0:intradayX[0],x1:intradayX[0],y0:0,y1:1,line:{color:"rgba(37,99,235,.68)",width:1,dash:"dash"},layer:"above",visible:false});}}
   Plotly.react("toolsChart",traces,layout,PLOT_CONFIG).then(()=>{installCrossPanelHover("toolsChart");installVisibleYAutoscale("toolsChart");});
 }
 
