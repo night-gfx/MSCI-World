@@ -56,6 +56,33 @@ def download(ticker: str, period: str, interval: str) -> list[list[float | int]]
     ]
 
 
+def download_daily_ohlc(ticker: str) -> list[list[float | int]]:
+    """Adjusted OHLC for reproducible close-signal/next-open backtests."""
+    frame = yf.download(
+        ticker, period="max", interval="1d", auto_adjust=False, prepost=False,
+        progress=False, threads=False,
+    )
+    if frame.empty:
+        raise RuntimeError(f"No daily OHLC data returned for {ticker}")
+    if isinstance(frame.columns, pd.MultiIndex):
+        frame.columns = frame.columns.get_level_values(0)
+    adjusted = "Adj Close" if "Adj Close" in frame.columns else "Close"
+    values = frame[["Open", "High", "Low", "Close", adjusted]].reset_index()
+    values.columns = ["date", "open", "high", "low", "close", "adjusted_close"]
+    values["date"] = pd.to_datetime(values["date"], utc=True, errors="coerce")
+    for column in ["open", "high", "low", "close", "adjusted_close"]:
+        values[column] = pd.to_numeric(values[column], errors="coerce")
+    values = values.dropna().sort_values("date").drop_duplicates("date", keep="last")
+    ratio = values["adjusted_close"] / values["close"]
+    for column in ["open", "high", "low"]:
+        values[column] *= ratio
+    return [[
+        int(row.date.timestamp() * 1000), round(float(row.open), 6),
+        round(float(row.high), 6), round(float(row.low), 6),
+        round(float(row.adjusted_close), 6),
+    ] for row in values.itertuples(index=False)]
+
+
 def merge_points(old: list, fresh: list) -> list:
     by_timestamp = {int(point[0]): point for point in old}
     for point in fresh:
@@ -95,10 +122,12 @@ def main() -> None:
     for key, config in INSTRUMENTS.items():
         old = previous_instruments.get(key, {})
         daily = merge_points(old.get("daily", []), download(config["ticker"], "max", "1d"))
+        daily_ohlc = download_daily_ohlc(config["ticker"])
         intraday = merge_points(old.get("intraday", []), download(config["ticker"], "60d", "5m"))
         result["instruments"][key] = {
             **config,
             "daily": daily,
+            "daily_ohlc": daily_ohlc,
             "intraday": intraday,
             "last_price": latest_quote(config["ticker"], daily),
         }
