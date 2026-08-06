@@ -47,7 +47,9 @@ jobs:
           git push
       - name: Record deployed GitHub version
         run: |
-          printf '{"deployed_at":"%s","commit":"%s"}\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(git rev-parse --short HEAD)" > data/build-info.json
+          BUILD_VERSION="$(git rev-parse --short HEAD)"
+          printf '{"deployed_at":"%s","commit":"%s"}\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$BUILD_VERSION" > data/build-info.json
+          sed -i "s/__BUILD_VERSION__/$BUILD_VERSION/g" index.html
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
