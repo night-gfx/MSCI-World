@@ -20,21 +20,18 @@
 <section id="toolsTab">
 <div class="workspace">
 <div class="tools-chart-pair" id="toolsChartPair">
-<div class="panel chart-panel"><div class="panel-title">Kurs und Indikatoren · Daily Adj Close</div><div class="chart" id="toolsChart"></div><div class="time-range-card"><div class="range-buttons time-range-buttons" id="toolRanges"></div></div></div>
+<div class="panel chart-panel current-chart-panel"><div class="current-chart-topbar"><div class="panel-title analytics-panel-title">Stand heute</div><div class="current-chart-summary"><div class="current-summary-item"><span>Letzter Kurs</span><strong id="wtCurrentPrice">–</strong></div><div class="current-summary-item"><span>Whittaker</span><strong id="wtCurrentWhittaker">–</strong></div><div class="current-summary-item"><span>Aktuelle Phase</span><strong id="wtCurrentPhase">–</strong></div></div></div><div class="chart" id="toolsChart"></div><div class="time-range-card"><div class="range-buttons time-range-buttons" id="toolRanges"></div></div></div>
 <div class="panel whittaker-simulation-panel hidden" id="whittakerSimulationPanel">
 <div class="whittaker-simulation-topbar">
-<div class="analytics-chart-header"><div><div class="panel-title analytics-panel-title">Walk-forward-Simulation · damaliger Informationsstand</div><p class="simulation-help">Start neutral. Sobald erstmals eine Phase bestätigt ist, bleibt der historische Zustand fest grün oder rot, bis die jeweils entgegengesetzte Phase nach denselben Bestätigungsregeln bestätigt wird.</p></div></div>
-<div class="whittaker-walkforward-controls compact">
+<div class="analytics-chart-header"><div class="panel-title analytics-panel-title">Walk-forward-Simulation</div></div>
+<div class="whittaker-context-controls">
 <div class="field"><label>Historienfenster</label><input id="wtBtWindow" min="20" type="number" value="250"/></div>
-<div class="field"><label>Bestätigung nach x Tagen</label><input id="wtBtConfirmDays" min="1" step="1" type="number" value="5"/></div>
-<div class="field"><label>Mindestbewegung |y| (%)</label><input id="wtBtMinPositivePct" min="0" step="0.1" type="number" value="1.0"/></div>
-<div class="field"><div class="field-label-row"><label for="whittakerAsOfDate">Simulationsdatum</label><span class="parameter-info" tabindex="0"><span class="parameter-info-glyph">i</span><span class="parameter-tooltip">Historischer Informationsstand der rechten Walk-forward-Simulation. Der linke Chart bleibt auf dem aktuellen Stand.</span></span></div><div class="date-control"><input id="whittakerAsOfDate" type="date"/><button class="date-reset-button" id="whittakerAsOfNow" type="button">Aktuell</button></div></div>
+<div class="field"><label for="whittakerAsOfDate">Simulationsdatum</label><div class="date-control"><input id="whittakerAsOfDate" type="date"/><button class="date-reset-button" id="whittakerAsOfNow" type="button">Aktuell</button></div></div>
 </div>
-<div class="phase-rule-grid">
-<div class="phase-rule positive"><strong>Positive Phase → GRÜN</strong><span id="wtPositiveRule">mind. x Tage und Anstieg ≥ +y %</span></div>
-<div class="phase-rule negative"><strong>Negative Phase → ROT / OUT</strong><span id="wtNegativeRule">mind. x Tage und Rückgang ≤ −y % → Verkauf am nächsten Open</span></div>
+<div class="phase-settings-grid">
+<div class="phase-settings positive"><div class="phase-settings-title">Positive Phase · GRÜN</div><div class="phase-settings-fields"><div class="field"><label>Bestätigung nach Tagen</label><input id="wtBtPositiveConfirmDays" min="1" step="1" type="number" value="5"/></div><div class="field"><label>Mindestanstieg (%)</label><input id="wtBtPositiveMinPct" min="0" step="0.1" type="number" value="1.0"/></div></div></div>
+<div class="phase-settings negative"><div class="phase-settings-title">Negative Phase · ROT</div><div class="phase-settings-fields"><div class="field"><label>Bestätigung nach Tagen</label><input id="wtBtNegativeConfirmDays" min="1" step="1" type="number" value="5"/></div><div class="field"><label>Mindestrückgang (%)</label><input id="wtBtNegativeMinPct" min="0" step="0.1" type="number" value="1.0"/></div></div></div>
 </div>
-<div class="phase-state-rule" id="wtStateRule">Neutral bis zur ersten bestätigten Phase. Danach nur noch Wechsel GRÜN ↔ ROT; kein nachträgliches Zurück auf Grau.</div>
 <div class="whittaker-simulation compact-simulation-controls"><div class="field-label-row"><label>Simulation</label><span class="simulation-date" id="whittakerSimDate">Aktuell</span></div><input class="simulation-slider" id="whittakerSimSlider" max="1" min="0" step="1" type="range" value="1"/><div class="simulation-actions"><button class="mini-button" id="whittakerSimPlay" type="button">▶ Start</button><button class="mini-button secondary" disabled="" id="whittakerSimPause" type="button">Pause</button><button class="mini-button secondary" id="whittakerSimReset" type="button">Aktuell</button><select aria-label="Simulationsgeschwindigkeit" class="select simulation-speed" id="whittakerSimSpeed"><option value="1000">1,0 s</option><option selected="" value="500">0,5 s</option><option value="250">0,25 s</option><option value="100">0,1 s</option></select></div></div>
 </div>
 <div class="chart whittaker-simulation-chart" id="whittakerSimulationChart"></div>
@@ -51,14 +48,14 @@
 <section class="whittaker-walkforward-lab hidden" id="whittakerWalkForwardLab">
 <section class="whittaker-tools-backtest" id="whittakerToolsBacktest">
 <div class="card whittaker-backtest-config">
-<div class="analytics-chart-header"><div><div class="card-title analytics-panel-title">Whittaker–Eilers Backtest · Walk-forward · Long only</div><p class="backtest-caveat">Long only: Einstieg nur in einem historisch bestätigten grünen Regime. <strong>Klare Regime-Exit-Regel:</strong> Eine negative Phase muss ebenfalls mindestens x Handelstage bestehen und mindestens −y % gefallen sein. Erst dann wechselt der Zustand dauerhaft auf ROT und die Position wird am nächsten Open verkauft. Zusätzlich kann die Position vorher über die einstellbare Mean-Reversion-Schwelle geschlossen werden.</p></div></div>
+<div class="analytics-chart-header"><div class="card-title analytics-panel-title">Whittaker–Eilers Backtest · Walk-forward · Long only</div></div>
 <div class="whittaker-backtest-controls">
 <div class="field"><label>Startkapital (€)</label><input id="wtBtCapital" min="10" step="100" type="number" value="10000"/></div>
 <div class="field"><label>Spread (Basispunkte)</label><input id="wtBtSpread" min="0" step="1" type="number" value="4"/></div>
 <div class="field"><label>Backtest-Zeitraum</label><select class="select" id="wtBtRange"><option value="1y">1 Jahr</option><option value="2y">2 Jahre</option><option selected="" value="5y">5 Jahre</option><option value="max">Max</option></select></div>
 <div class="field"><label>Einstieg, Kurs − Regression</label><div class="inline-condition"><select class="select" id="wtBtBuyOperator"><option selected="" value="&lt;=">≤</option><option value="&lt;">&lt;</option><option value="&gt;=">≥</option><option value="&gt;">&gt;</option></select><input id="wtBtBuyValue" step="0.01" type="number" value="-1"/></div></div>
 <div class="field"><label>Mean-Reversion-Exit, Kurs − Regression</label><div class="inline-condition"><select class="select" id="wtBtSellOperator"><option selected="" value="&gt;=">≥</option><option value="&gt;">&gt;</option><option value="&lt;=">≤</option><option value="&lt;">&lt;</option></select><input id="wtBtSellValue" step="0.01" type="number" value="0"/></div></div>
-<div class="fixed-exit-rule"><strong>Regime-Exit (fix)</strong><span>Bestätigte rote Phase: mindestens x Tage + Rückgang ≤ −y % → Verkauf am nächsten Open.</span></div>
+<div class="fixed-exit-rule"><strong>Regime-Exit</strong><span id="wtBacktestRegimeRule">ROT bestätigt → Verkauf am nächsten Open</span></div>
 </div>
 </div>
 <div class="panel backtest-chart-panel whittaker-inline-backtest-chart"><div class="analytics-chart-header"><div class="panel-title analytics-panel-title">Whittaker Walk-forward Backtest</div></div><div class="chart" id="wtBacktestChart"></div></div>
