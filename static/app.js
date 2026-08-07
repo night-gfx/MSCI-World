@@ -330,17 +330,22 @@ function backtestSignals(rows,type,calculationStart){const points=backtestSignal
   if(type==="regression"){const window=Math.max(3,+$("btRegressionWindow").value||182);for(let i=Math.max(2,calculationStart);i<points.length;i++){const sample=points.slice(Math.max(0,i-window+1),i+1),fitted=regression(sample,window);filter[i]=fitted.at(-1);signals[i]=filterSlope(fitted,fitted.length-1);}return {signals,filter};}
   if(type==="bollinger"){const window=Math.max(2,+$("btBollingerWindow").value||20),multiple=Math.max(.1,+$("btBollingerStd").value||2),bands=rolling(points.map(p=>p[1]),window,multiple);for(let i=0;i<points.length;i++){const upper=bands.upper[i],lower=bands.lower[i];filter[i]=bands.mid[i];if(Number.isFinite(upper)&&Number.isFinite(lower)&&upper!==lower)signals[i]=(points[i][1]-lower)/(upper-lower)*100;}return {signals,filter,bands};}
   const window=Math.max(10,+$("btWhittakerWindow").value||250),lambda=Math.max(.1,+$("btWhittakerLambda").value||1000),phaseRegression=Array(rows.length).fill(null),phaseDirection=Array(rows.length).fill(null);
+  // Strict walk-forward: for the signal on day i, the Whittaker filter and phase
+  // regression are estimated only with data available through i-10. The fitted
+  // phase line is then extrapolated across the ten held-out trading days to i.
+  // This prevents those ten days (including day i) from reshaping the smoother
+  // or the phase that generated the regression signal.
   for(let i=Math.max(2,calculationStart);i<points.length;i++){
-    const first=Math.max(0,i-window+1),sample=points.slice(first,i+1),smooth=whittakerEilers(sample,lambda),currentIndex=smooth.length-1;
+    const fitGlobalEnd=i-WHITTAKER_REGRESSION_HOLDOUT_DAYS;if(fitGlobalEnd<2)continue;
+    const first=Math.max(0,fitGlobalEnd-window+1),fitSample=points.slice(first,fitGlobalEnd+1),smooth=whittakerEilers(fitSample,lambda),fitEnd=smooth.length-1;
     filter[i]=smooth.at(-1);
-    if(currentIndex<1)continue;
-    const fitEnd=currentIndex-WHITTAKER_REGRESSION_HOLDOUT_DAYS;if(fitEnd<1)continue;
+    if(fitEnd<1)continue;
     const pivots=whittakerTurningPoints(smooth,fitEnd);let phaseStart=pivots.length?pivots.at(-1):0;
     if(fitEnd-phaseStart<1&&pivots.length>1)phaseStart=pivots.at(-2);
     if(fitEnd-phaseStart<1)phaseStart=Math.max(0,fitEnd-20);
     if(fitEnd-phaseStart<1)continue;
-    const model=linearFitFiltered(sample,smooth,phaseStart,fitEnd);if(!model)continue;
-    const estimate=model.valueAtIndex(currentIndex);phaseRegression[i]=estimate;phaseDirection[i]=model.slope>=0?1:-1;
+    const model=linearFitFiltered(fitSample,smooth,phaseStart,fitEnd);if(!model)continue;
+    const projectionIndex=fitEnd+(i-fitGlobalEnd),estimate=model.valueAtIndex(projectionIndex);phaseRegression[i]=estimate;phaseDirection[i]=model.slope>=0?1:-1;
     if(Number.isFinite(estimate)&&estimate!==0)signals[i]=(points[i][1]/estimate-1)*100;
   }
   return {signals,filter,phaseRegression,phaseDirection};
