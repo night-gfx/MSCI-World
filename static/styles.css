@@ -44,3 +44,14 @@ body{background:#fff;color:#0f172a}.shell{max-width:none;width:100%;padding:clam
 #whittakerToolsBacktest .whittaker-backtest-config{margin-top:2px}
 @media(max-width:1100px){.whittaker-walkforward-controls{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:680px){.tabs{grid-template-columns:1fr 1fr}.whittaker-walkforward-controls{grid-template-columns:1fr}.whittaker-simulation-chart{height:480px;min-height:480px}}
+
+
+/* v9: current Trading Tools chart and historical walk-forward simulation side by side */
+.tools-chart-pair{grid-area:chart;display:grid;grid-template-columns:minmax(0,1fr);gap:14px;align-items:stretch;min-width:0}
+.tools-chart-pair>.chart-panel{grid-area:auto;min-width:0}
+.tools-chart-pair>.whittaker-simulation-panel{min-width:0;margin:0;padding:0;overflow:hidden}
+.tools-chart-pair>.whittaker-simulation-panel .analytics-chart-header{padding:14px 16px 0;margin:0}
+.tools-chart-pair.simulation-active{grid-template-columns:minmax(0,1.15fr) minmax(420px,.85fr)}
+.tools-chart-pair .whittaker-simulation-chart{width:100%;height:100%;min-height:560px}
+@media(max-width:1250px){.tools-chart-pair.simulation-active{grid-template-columns:1fr}.tools-chart-pair .whittaker-simulation-chart{min-height:520px}}
+@media(max-width:680px){.tools-chart-pair .whittaker-simulation-chart{min-height:480px}}
