@@ -1,6 +1,6 @@
 const $ = id => document.getElementById(id);
 const PARAM_IDS = ["showRegression","regShort","regMedium","regLong","showBollinger","bollingerWindow","bollingerStd","showKalman","kalmanQ","kalmanR","showWhittaker","smoothLambda","whittakerRegressionHoldout"];
-const WT_BT_IDS = ["wtBtWindow","wtBtPositiveConfirmDays","wtBtPositiveMinPct","wtBtNegativeConfirmDays","wtBtNegativeMinPct","wtBtCapital","wtBtAbsoluteAmount","wtBtSpread","wtBtRange","wtBtBuyOperator","wtBtBuyValue","wtBtSellOperator","wtBtSellValue"];
+const WT_BT_IDS = ["wtBtWindow","wtBtPositiveConfirmDays","wtBtPositiveMinPct","wtBtNegativeConfirmDays","wtBtNegativeMinPct","wtBtCapital","wtBtAbsoluteAmount","wtBtSpread","wtBtRange"];
 const RANGE_OPTIONS = [["6 Monate","6m"],["1 Jahr","1y"],["2 Jahre","2y"],["5 Jahre","5y"],["Max","max"]];
 const ANALYTICS_RANGE_OPTIONS = RANGE_OPTIONS;
 const WHITTAKER_REGRESSION_HOLDOUT_DAYS = 10;
@@ -422,17 +422,15 @@ function runBacktest(rows,signals,type,start){const capital=Math.max(10,+$("btCa
 }
 
 function runWhittakerLongOnlyBacktest(rows,computed,start){
-  const capital=Math.max(10,+$("wtBtCapital").value||10000),spread=Math.max(0,+$("wtBtSpread").value||0)/20000,buyOperator=$("wtBtBuyOperator").value,buyThreshold=+$("wtBtBuyValue").value||0,sellOperator=$("wtBtSellOperator").value,sellThreshold=+$("wtBtSellValue").value||0;
+  const capital=Math.max(10,+$("wtBtCapital").value||10000),spread=Math.max(0,+$("wtBtSpread").value||0)/20000;
   let cash=capital,shares=0,basis=0,taxes=0,fees=0,peak=capital,maxDrawdown=0,investedDays=0;const curve=[],trades=[];
   for(let i=start;i<rows.length;i++){
-    const signalIndex=i-1,signal=computed.signals[signalIndex],eligible=!!computed.eligible[signalIndex],open=rows[i][1],close=rows[i][4];
-    if(!shares&&eligible&&compareSignal(signal,buyOperator,buyThreshold)&&cash>1){
-      const ask=open*(1+spread),spend=cash-1;shares=spend/ask;basis=cash;cash=0;fees+=1;trades.push({side:"Kauf",signalDate:rows[signalIndex][0],date:rows[i][0],price:ask,chartPrice:close,cost:1,tax:0,capital:shares*close,reason:"Bestätigte grüne Phase"});
-    }else if(shares){
-      const confirmedRed=computed.phaseState?.[signalIndex]<0,meanReversionExit=!confirmedRed&&compareSignal(signal,sellOperator,sellThreshold);
-      if(confirmedRed||meanReversionExit){
-        const bid=open*(1-spread),gross=shares*bid-1,profit=gross-basis,tax=Math.max(0,profit)*.25;cash=gross-tax;taxes+=tax;fees+=1;shares=0;basis=0;trades.push({side:"Verkauf",signalDate:rows[signalIndex][0],date:rows[i][0],price:bid,chartPrice:close,cost:1,tax,capital:cash,reason:confirmedRed?"Regime-Exit: bestätigte rote Phase":"Mean-Reversion-Exit"});
-      }
+    // Walk-forward rule only: use yesterday's latched phase state and execute at today's open.
+    const signalIndex=i-1,phaseState=computed.phaseState?.[signalIndex]??0,open=rows[i][1],close=rows[i][4];
+    if(!shares&&phaseState>0&&cash>1){
+      const ask=open*(1+spread),spend=cash-1;shares=spend/ask;basis=cash;cash=0;fees+=1;trades.push({side:"Kauf",signalDate:rows[signalIndex][0],date:rows[i][0],price:ask,chartPrice:close,cost:1,tax:0,capital:shares*close,reason:"Walk-forward: GRÜN bestätigt"});
+    }else if(shares&&phaseState<0){
+      const bid=open*(1-spread),gross=shares*bid-1,profit=gross-basis,tax=Math.max(0,profit)*.25;cash=gross-tax;taxes+=tax;fees+=1;shares=0;basis=0;trades.push({side:"Verkauf",signalDate:rows[signalIndex][0],date:rows[i][0],price:bid,chartPrice:close,cost:1,tax,capital:cash,reason:"Walk-forward: ROT bestätigt"});
     }
     if(shares)investedDays++;
     const equity=cash+shares*close;peak=Math.max(peak,equity);maxDrawdown=Math.min(maxDrawdown,equity/peak-1);curve.push([rows[i][0],equity]);
@@ -446,25 +444,23 @@ function buildWhittakerLongOnlyBenchmark(rows,start,capital,spread){
   const final=curve.at(-1)?.[1]??capital;return {curve,capital,final,returnPct:(final/capital-1)*100};
 }
 function runWhittakerFixedNotionalBacktest(rows,computed,start){
-  const amount=Math.max(10,+$("wtBtAbsoluteAmount").value||10000),spread=Math.max(0,+$("wtBtSpread").value||0)/20000,buyOperator=$("wtBtBuyOperator").value,buyThreshold=+$("wtBtBuyValue").value||0,sellOperator=$("wtBtSellOperator").value,sellThreshold=+$("wtBtSellValue").value||0;
+  const amount=Math.max(10,+$("wtBtAbsoluteAmount").value||10000),spread=Math.max(0,+$("wtBtSpread").value||0)/20000;
   let shares=0,entry=null,realizedPnl=0,taxes=0,fees=0;const curve=[],trades=[];
   for(let i=start;i<rows.length;i++){
-    const signalIndex=i-1,signal=computed.signals[signalIndex],eligible=!!computed.eligible[signalIndex],open=rows[i][1],close=rows[i][4];
-    if(!shares&&eligible&&compareSignal(signal,buyOperator,buyThreshold)){
-      const ask=open*(1+spread),spend=Math.max(0,amount-1);shares=spend/ask;fees+=1;entry={signalDate:rows[signalIndex][0],date:rows[i][0],price:ask,reason:"Bestätigte grüne Phase",shares};
-    }else if(shares){
-      const confirmedRed=computed.phaseState?.[signalIndex]<0,meanReversionExit=!confirmedRed&&compareSignal(signal,sellOperator,sellThreshold);
-      if(confirmedRed||meanReversionExit){
-        const bid=open*(1-spread),gross=shares*bid-1,pretaxPnl=gross-amount,tax=Math.max(0,pretaxPnl)*.25,netPnl=pretaxPnl-tax,returnPct=amount?netPnl/amount*100:0;realizedPnl+=netPnl;taxes+=tax;fees+=1;
-        trades.push({entrySignalDate:entry.signalDate,entryDate:entry.date,exitSignalDate:rows[signalIndex][0],exitDate:rows[i][0],entryPrice:entry.price,exitPrice:bid,reason:confirmedRed?"Regime-Exit: bestätigte rote Phase":"Mean-Reversion-Exit",status:"Geschlossen",amount,pretaxPnl,netPnl,returnPct,tax,fees:2,holdingDays:Math.max(0,Math.round((rows[i][0]-entry.date)/86400000))});
-        shares=0;entry=null;
-      }
+    // Same Walk-forward regime rule as the simulation, with one trading-day execution lag.
+    const signalIndex=i-1,phaseState=computed.phaseState?.[signalIndex]??0,open=rows[i][1],close=rows[i][4];
+    if(!shares&&phaseState>0){
+      const ask=open*(1+spread),spend=Math.max(0,amount-1);shares=spend/ask;fees+=1;entry={signalDate:rows[signalIndex][0],date:rows[i][0],price:ask,reason:"Walk-forward: GRÜN bestätigt",shares};
+    }else if(shares&&phaseState<0){
+      const bid=open*(1-spread),gross=shares*bid-1,pretaxPnl=gross-amount,tax=Math.max(0,pretaxPnl)*.25,netPnl=pretaxPnl-tax,returnPct=amount?netPnl/amount*100:0;realizedPnl+=netPnl;taxes+=tax;fees+=1;
+      trades.push({entrySignalDate:entry.signalDate,entryDate:entry.date,exitSignalDate:rows[signalIndex][0],exitDate:rows[i][0],entryPrice:entry.price,exitPrice:bid,reason:"Walk-forward: ROT bestätigt",status:"Geschlossen",amount,pretaxPnl,netPnl,returnPct,tax,fees:2,holdingDays:Math.max(0,Math.round((rows[i][0]-entry.date)/86400000))});
+      shares=0;entry=null;
     }
     const openPnl=shares?shares*close-amount:0;curve.push([rows[i][0],realizedPnl+openPnl]);
   }
   if(shares&&entry){
     const last=rows.at(-1),mark=last[4],openPnl=shares*mark-amount;
-    trades.push({entrySignalDate:entry.signalDate,entryDate:entry.date,exitSignalDate:null,exitDate:null,entryPrice:entry.price,exitPrice:mark,reason:"Offene Position",status:"Offen",amount,pretaxPnl:openPnl,netPnl:openPnl,returnPct:amount?openPnl/amount*100:0,tax:0,fees:1,holdingDays:Math.max(0,Math.round((last[0]-entry.date)/86400000))});
+    trades.push({entrySignalDate:entry.signalDate,entryDate:entry.date,exitSignalDate:null,exitDate:null,entryPrice:entry.price,exitPrice:mark,reason:"Offene Position · GRÜN",status:"Offen",amount,pretaxPnl:openPnl,netPnl:openPnl,returnPct:amount?openPnl/amount*100:0,tax:0,fees:1,holdingDays:Math.max(0,Math.round((last[0]-entry.date)/86400000))});
   }
   const closed=trades.filter(t=>t.status==="Geschlossen"),wins=closed.filter(t=>t.netPnl>0).length,losses=closed.filter(t=>t.netPnl<0).length,currentPnl=curve.at(-1)?.[1]??0;
   return {amount,curve,trades,closed,realizedPnl,currentPnl,taxes,fees,wins,losses,winRate:closed.length?wins/closed.length*100:NaN,averagePnl:closed.length?closed.reduce((s,t)=>s+t.netPnl,0)/closed.length:NaN,averageReturn:closed.length?closed.reduce((s,t)=>s+t.returnPct,0)/closed.length:NaN,bestTrade:closed.length?Math.max(...closed.map(t=>t.returnPct)):NaN,worstTrade:closed.length?Math.min(...closed.map(t=>t.returnPct)):NaN};
@@ -517,6 +513,7 @@ function renderWhittakerToolsBacktest(){
   const key=instrumentKey();if(wtSpreadInstrument!==key){$("wtBtSpread").value=DEFAULT_SPREADS[key]??10;wtSpreadInstrument=key;}
   const rows=backtestOhlc();if(rows.length<30){if($("wtRelativeChart"))$("wtRelativeChart").innerHTML="<div class='backtest-empty'>Für diesen Stand fehlen ausreichende Tagesdaten.</div>";return;}
   const range=$("wtBtRange").value||"5y",cutoff=rangeStart(rows.at(-1)[0],range),start=Math.max(1,rows.findIndex(row=>row[0]>=cutoff)),window=Math.max(20,+$("wtBtWindow").value||250),holdout=Math.max(0,Math.floor(+$("whittakerRegressionHoldout").value||0)),positiveConfirmDays=Math.max(1,Math.floor(+$("wtBtPositiveConfirmDays").value||5)),negativeConfirmDays=Math.max(1,Math.floor(+$("wtBtNegativeConfirmDays").value||5)),maxConfirmDays=Math.max(positiveConfirmDays,negativeConfirmDays),calculationStart=Math.max(2,start-window-holdout-maxConfirmDays-5),computed=calculateWhittakerToolsWalkForward(rows,calculationStart),relative=runWhittakerLongOnlyBacktest(rows,computed,start),absolute=runWhittakerFixedNotionalBacktest(rows,computed,start),spread=Math.max(0,+$("wtBtSpread").value||0)/20000,benchmark=buildWhittakerLongOnlyBenchmark(rows,start,relative.capital,spread);
+  if($("wtBacktestEntryRule"))$("wtBacktestEntryRule").textContent=`GRÜN: ${computed.positiveConfirmDays} Tage + Anstieg ≥ +${fmt(computed.positiveMinPct,1)} % → Kauf nächster Open`;
   if($("wtBacktestRegimeRule"))$("wtBacktestRegimeRule").textContent=`ROT: ${computed.negativeConfirmDays} Tage + Rückgang ≤ −${fmt(computed.negativeMinPct,1)} % → Verkauf nächster Open`;
   const tile=(label,value,tone)=>`<div class="metric"><span>${label}</span><strong${tone?` class="${tone}"`:""}>${value}</strong></div>`;
   $("wtRelativeMetrics").innerHTML=tile("Endkapital",`${fmt(relative.final)} €`)+tile("Gesamtrendite",pct(relative.returnPct),relative.returnPct>=0?"positive":"negative")+tile("Long Only",pct(benchmark.returnPct),benchmark.returnPct>=0?"positive":"negative")+tile("Exposure",pct(relative.exposurePct));
