@@ -29,3 +29,18 @@ body{background:#fff;color:#0f172a}.shell{max-width:none;width:100%;padding:clam
 .whittaker-simulation{grid-column:1/-1;margin-top:2px;padding-top:10px;border-top:1px solid #e2e8f0}.simulation-date{color:#0e7490;font-size:11px;font-weight:800}.simulation-slider{width:100%;accent-color:#0891b2}.simulation-actions{display:grid;grid-template-columns:auto auto auto minmax(84px,1fr);gap:6px;margin-top:7px}.mini-button{min-height:34px;padding:0 10px;border:1px solid #0891b2;border-radius:8px;background:#0891b2;color:#fff;font-size:11px;font-weight:800;cursor:pointer}.mini-button.secondary{background:#fff;color:#0e7490}.mini-button:disabled{opacity:.45;cursor:not-allowed}.simulation-speed{min-height:34px;padding:0 8px;font-size:11px}.whittaker-tools-backtest{display:grid;gap:14px;margin:4px 0 24px}.whittaker-backtest-config{border-top:3px solid #0891b2}.whittaker-backtest-config .analytics-chart-header{margin-bottom:10px}.whittaker-backtest-config .backtest-caveat{max-width:1100px}.whittaker-backtest-controls{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}.inline-condition{display:grid;grid-template-columns:72px minmax(0,1fr);gap:6px}.inline-condition .select{min-width:0;padding:8px}.whittaker-inline-backtest-chart{padding:16px}.whittaker-inline-backtest-chart #wtBacktestChart{height:820px;min-height:820px}.wt-regime-pill{display:inline-flex;align-items:center;gap:5px;padding:3px 7px;border-radius:999px;background:#ecfdf5;color:#15803d;font-size:10px;font-weight:800}.wt-regime-pill::before{content:"";width:7px;height:7px;border-radius:50%;background:#16a34a}@media(max-width:1100px){.whittaker-backtest-controls{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:680px){.simulation-actions{grid-template-columns:1fr 1fr}.whittaker-backtest-controls{grid-template-columns:1fr}.whittaker-inline-backtest-chart #wtBacktestChart{height:680px;min-height:680px}}
 
 .strategy-switch{grid-template-columns:repeat(3,minmax(0,1fr))}
+/* v8: Whittaker walk-forward simulation and backtest live inside Trading Tools */
+.tabs{grid-template-columns:repeat(2,1fr)}
+.whittaker-walkforward-lab{display:grid;gap:14px;margin:18px 0 26px}
+.whittaker-walkforward-config{border-top:3px solid #0891b2;padding:15px}
+.whittaker-walkforward-config .analytics-chart-header{margin-bottom:12px}
+.whittaker-walkforward-config .backtest-caveat{max-width:1200px}
+.whittaker-walkforward-controls{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+.lower-simulation-controls{margin-top:12px;padding-top:12px;border-top:1px solid #e2e8f0}
+.whittaker-simulation-panel{padding:16px;border:1px solid rgba(148,163,184,.35);border-radius:18px;background:#fff;box-shadow:0 14px 34px rgba(15,23,42,.07)}
+.whittaker-simulation-panel .analytics-chart-header{margin-bottom:4px}
+.whittaker-simulation-chart{height:560px;min-height:560px;width:100%}
+#whittakerToolsBacktest{margin:0;gap:14px}
+#whittakerToolsBacktest .whittaker-backtest-config{margin-top:2px}
+@media(max-width:1100px){.whittaker-walkforward-controls{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:680px){.tabs{grid-template-columns:1fr 1fr}.whittaker-walkforward-controls{grid-template-columns:1fr}.whittaker-simulation-chart{height:480px;min-height:480px}}
