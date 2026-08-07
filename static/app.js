@@ -1,5 +1,5 @@
 const $ = id => document.getElementById(id);
-const PARAM_IDS = ["showRegression","regShort","regMedium","regLong","showBollinger","bollingerWindow","bollingerStd","showKalman","kalmanQ","kalmanR","showWhittaker","smoothLambda"];
+const PARAM_IDS = ["showRegression","regShort","regMedium","regLong","showBollinger","bollingerWindow","bollingerStd","showKalman","kalmanQ","kalmanR","showWhittaker","smoothLambda","whittakerRegressionHoldout"];
 const RANGE_OPTIONS = [["6 Monate","6m"],["1 Jahr","1y"],["2 Jahre","2y"],["5 Jahre","5y"],["Max","max"]];
 const ANALYTICS_RANGE_OPTIONS = RANGE_OPTIONS;
 const WHITTAKER_REGRESSION_HOLDOUT_DAYS = 10;
@@ -201,25 +201,23 @@ if(!window.__msciRangeCardResize){window.__msciRangeCardResize=true;window.addEv
 
 function renderTools(){
   const source=toolsSeries(),dailyFull=source.daily,dailyY=pointPrices(dailyFull),dailyPoints=filterRange(dailyFull,toolRange),dailyStart=dailyFull.findIndex(point=>point[0]===dailyPoints[0][0]),dailyX=pointDates(dailyPoints),visibleDailyY=pointPrices(dailyPoints),intradayPoints=source.intraday,intradayX=pointDates(intradayPoints),intradayY=pointPrices(intradayPoints),hasIntraday=true,hasIntradayData=intradayPoints.length>0,sessionReference=hasIntradayData?intradayPoints[0][0]:Date.parse(`${source.sessionDay}T12:00:00Z`),xRange=[new Date(dailyPoints[0][0]),new Date(dailyPoints.at(-1)[0])];
-  const indicatorBaseDaily=hasIntradayData&&dailyFull.length&&intradayPoints.length&&dailyFull.at(-1)[0]===intradayPoints.at(-1)[0]?dailyFull.slice(0,-1):dailyFull;
   const historicalDifference=values=>visibleDailyY.map((price,index)=>Number.isFinite(values[index])?price-values[index]:null);
   const traces=[{...lineTrace(dailyX,visibleDailyY,currentInstrument().name,"#0f172a","solid",1,2.5),customdata:dailyPoints.map(point=>toolsHoverLabel(point[0])),hovertemplate:`%{customdata}<br>${currentInstrument().name}: %{y:.4f}<extra></extra>`}],panels=[];
   if($("showBollinger").checked){
     const bollingerWindow=Math.max(2,+$("bollingerWindow").value||20),bollingerMultiple=Math.max(.1,+$("bollingerStd").value||2),fullBands=rolling(dailyY,bollingerWindow,bollingerMultiple),bands={mid:fullBands.mid.slice(dailyStart),upper:fullBands.upper.slice(dailyStart),lower:fullBands.lower.slice(dailyStart)};
     traces.push({...lineTrace(dailyX,bands.upper,"Bollinger Upper","#60a5fa","dot",1,1.2),hoverinfo:"skip"});traces.push({...lineTrace(dailyX,bands.lower,"Bollinger Lower","#60a5fa","dot",1,1.2),hoverinfo:"skip",fill:"tonexty",fillcolor:"rgba(59,130,246,.08)"});traces.push({...lineTrace(dailyX,bands.mid,"Bollinger Mittelwert","#2563eb","solid",1,1.4),hoverinfo:"skip"});
-    const intradayUpper=[],intradayLower=[];for(const point of intradayPoints){const values=pointPrices([...indicatorBaseDaily,point]),miniBands=rolling(values,bollingerWindow,bollingerMultiple),upper=miniBands.upper.at(-1),lower=miniBands.lower.at(-1);intradayUpper.push(Number.isFinite(upper)?point[1]-upper:null);intradayLower.push(Number.isFinite(lower)?point[1]-lower:null);}
-    panels.push({label:"Bollinger Bands",color:"#2563eb",series:[historicalDifference(bands.upper),historicalDifference(bands.lower)],intradaySeries:[intradayUpper,intradayLower]});
+    panels.push({label:"Bollinger Bands",color:"#2563eb",series:[historicalDifference(bands.upper),historicalDifference(bands.lower)]});
   }
   if($("showRegression").checked){
     for(const [id,label] of [["regShort","Kurz"],["regMedium","Mittel"],["regLong","Lang"]]){
       const n=Math.max(2,+$(id).value||2),reg=regression(dailyFull,n).slice(dailyStart);
-      const period={182:"6 Monate",365:"1 Jahr",730:"2 Jahre",1825:"5 Jahre"}[n]||`${n} Tage`,intradayRegressionDifference=intradayPoints.map(point=>{const fitted=regression([...indicatorBaseDaily,point],n).at(-1);return Number.isFinite(fitted)?point[1]-fitted:null;});
-      traces.push({...lineTrace(dailyX,reg,`Regression ${period}`,"#7c3aed","dash",1,2.1),hoverinfo:"skip"});panels.push({label:`Regression ${period}`,color:"#7c3aed",series:[historicalDifference(reg)],intradaySeries:[intradayRegressionDifference]});
+      const period={182:"6 Monate",365:"1 Jahr",730:"2 Jahre",1825:"5 Jahre"}[n]||`${n} Tage`;
+      traces.push({...lineTrace(dailyX,reg,`Regression ${period}`,"#7c3aed","dash",1,2.1),hoverinfo:"skip"});panels.push({label:`Regression ${period}`,color:"#7c3aed",series:[historicalDifference(reg)]});
     }
   }
   if($("showKalman").checked){
     const kalmanQ=Math.max(.001,+$("kalmanQ").value||1),kalmanR=Math.max(.001,+$("kalmanR").value||25),fullK=kalman2d(dailyFull,kalmanQ,kalmanR),k=fullK.slice(dailyStart);
-    traces.push(...splitTrend(dailyX,k,"Kalman 2D"));const fullBar=fullK.map((value,index)=>index?value-fullK[index-1]:null),intradayBar=intradayPoints.map(point=>{const values=kalman2d([...indicatorBaseDaily,point],kalmanQ,kalmanR);return values.length>1?values.at(-1)-values.at(-2):null;});panels.push({label:"Kalman-Steigung zum Vortag",color:"#db2777",bar:fullBar.slice(dailyStart),intradayBar});
+    traces.push(...splitTrend(dailyX,k,"Kalman 2D"));const fullBar=fullK.map((value,index)=>index?value-fullK[index-1]:null);panels.push({label:"Kalman-Steigung zum Vortag",color:"#db2777",bar:fullBar.slice(dailyStart)});
   }
   if($("showWhittaker").checked){
     const lambda=Math.max(.1,+$("smoothLambda").value||1000),asOfInput=$("whittakerAsOfDate");if(asOfInput&&dailyFull.length)asOfInput.max=dateKey(dailyFull.at(-1)[0]);
@@ -227,7 +225,7 @@ function renderTools(){
     if(analysisPoints.length>=3){
       const fullSmooth=whittakerEilers(analysisPoints,lambda),filterOnDaily=Array(dailyFull.length).fill(null);for(let i=0;i<fullSmooth.length;i++)filterOnDaily[i]=fullSmooth[i];const smooth=filterOnDaily.slice(dailyStart);
       traces.push(...splitTrend(dailyX,smooth,"Whittaker–Eilers-Smoother · aktueller Anker",visibleDailyY));
-      const regressions=whittakerTrendRegressions(analysisPoints,fullSmooth);
+      const regressionHoldout=Math.max(0,Math.floor(+$("whittakerRegressionHoldout").value||0)),regressions=whittakerTrendRegressions(analysisPoints,fullSmooth,regressionHoldout);
       if(regressions?.phases?.length){
         const pivotIndexes=regressions.pivots.filter(index=>index>0&&index<fullSmooth.length-1),pivotX=pivotIndexes.map(index=>new Date(analysisPoints[index][0])),pivotY=pivotIndexes.map(index=>fullSmooth[index]),pivotKinds=pivotIndexes.map(index=>whittakerPivotKind(fullSmooth,index));if(pivotX.length)traces.push({x:pivotX,y:pivotY,type:"scatter",mode:"markers",name:"Whittaker Hoch-/Tiefpunkte",showlegend:false,marker:{size:7,color:pivotKinds.map(kind=>kind==="Hoch"?"#dc2626":"#16a34a"),symbol:pivotKinds.map(kind=>kind==="Hoch"?"triangle-down":"triangle-up"),line:{color:"#fff",width:.8}},customdata:pivotKinds,hovertemplate:"%{customdata}: %{y:.4f}<extra></extra>"});
         const visibleSegments=[];
@@ -237,10 +235,8 @@ function renderTools(){
           visibleSegments.push({phase,indices,x,actual,regression:regressionValues,residualAbs,residualPct});
         });
         if(visibleSegments.length){
-          const intradayWhittakerRegression=[],intradayWhittakerResidual=[],intradayWhittakerDirection=[];
-          if(!asOfInput?.value)for(const point of intradayPoints){const miniPoints=[...indicatorBaseDaily,point],miniSmooth=whittakerEilers(miniPoints,lambda),miniRegressions=whittakerTrendRegressions(miniPoints,miniSmooth),miniActive=miniRegressions?.active,estimate=miniActive?.valueAtIndex(miniPoints.length-1);intradayWhittakerRegression.push(Number.isFinite(estimate)?estimate:null);intradayWhittakerResidual.push(Number.isFinite(estimate)&&estimate!==0?(point[1]/estimate-1)*100:null);intradayWhittakerDirection.push(miniActive?.direction??null);}
-          panels.push({kind:"whittaker-phase-regression",label:"Tatsächlicher Kurs & Whittaker-Phasenregressionen",color:"#0891b2",segments:visibleSegments,actualX:dailyX,actualY:visibleDailyY,intradayActual:asOfInput?.value?[]:intradayY,intradayRegression:intradayWhittakerRegression,intradayDirection:intradayWhittakerDirection});
-          panels.push({kind:"whittaker-phase-residual",label:"Kurs − Phasenregression (%)",color:"#0891b2",segments:visibleSegments,intradayResidual:intradayWhittakerResidual,intradayDirection:intradayWhittakerDirection});
+          panels.push({kind:"whittaker-phase-regression",label:"Tatsächlicher Kurs & Whittaker-Phasenregressionen",color:"#0891b2",segments:visibleSegments,actualX:dailyX,actualY:visibleDailyY});
+          panels.push({kind:"whittaker-phase-residual",label:"Kurs − Phasenregression (%)",color:"#0891b2",segments:visibleSegments});
         }
       }
     }
@@ -250,10 +246,10 @@ function renderTools(){
   if(hasIntradayData){traces.push(...splitPriceAroundClose(intradayX,intradayY,rightAxisStart,previousClose));traces.push({x:intradayX,y:intradayY,type:"scatter",mode:"markers",xaxis:`x${rightAxisStart}`,yaxis:`y${rightAxisStart}`,meta:"intraday-extension",showlegend:false,marker:{size:intradayX.length===1?7:9,color:intradayX.length===1?"#000":"rgba(0,0,0,0)",line:{color:"#000",width:intradayX.length===1?1:0}},customdata:intradayPoints.map(point=>toolsHoverLabel(point[0])),hovertemplate:"%{customdata}<br>Intraday-Kurs: %{y:.4f}<extra></extra>"});}
   const chartHeight=total+114,historicalDomain=[1-main,1],historicalYRange=paddedRange(traces.filter(t=>(t.yaxis||"y")==="y"&&t.meta!=="trend-fill").map(t=>t.y||[]));$("toolsChart").style.height=`${chartHeight}px`;$("toolsChart").style.minHeight=`${chartHeight}px`;
   const layout={...baseLayout(),height:chartHeight,dragmode:"zoom",showlegend:false,hoversubplots:"axis",margin:{l:48,r:88,t:72,b:42},xaxis:{...axisBase(dailyFull),domain:leftDomain,range:xRange,anchor:"y",showticklabels:false,hoverformat:"%d.%m.%Y"},yaxis:{domain:historicalDomain,range:historicalYRange,showgrid:false,showline:false,zeroline:false,tickformat:".3f",tickfont:{size:10,color:"#64748b"},automargin:true},bargap:.06,annotations:[],shapes:[]};
-  if(hasIntraday){const intradayDate=new Date(sessionReference).toLocaleDateString("de-DE",{day:"2-digit",month:"2-digit",year:"numeric"}),intradayValues=[intradayY],intradayDomain=alignedIntradayDomain(previousClose,historicalYRange,historicalDomain);layout[`yaxis${rightAxisStart}`]={domain:intradayDomain,range:symmetricPriceRange(intradayValues,previousClose),side:"right",showticklabels:true,tickformat:".3f",nticks:5,tickfont:{family:"Arial, sans-serif",size:10,color:"#64748b"},showgrid:false,showline:false,zeroline:false,ticks:"",automargin:true};layout.shapes.push({name:"intraday-background",type:"rect",xref:"paper",yref:"paper",x0:.92,x1:1,y0:intradayDomain[0],y1:intradayDomain[1],fillcolor:"rgba(100,116,139,.11)",line:{width:0},layer:"below"},{name:"previous-close-reference",type:"line",xref:`x${rightAxisStart}`,yref:`y${rightAxisStart}`,x0:intradayRange[0],x1:intradayRange[1],y0:previousClose,y1:previousClose,line:{color:"#0f172a",width:2.5},layer:"below"});layout.annotations.push({xref:"paper",yref:"paper",x:.455,y:1.035,text:"<b>Daily Historical</b>",showarrow:false,xanchor:"center",yanchor:"bottom",font:{family:"Arial, sans-serif",size:11,color:"#475569"}},{xref:"paper",yref:"paper",x:.96,y:1.035,text:`<b>Intraday (${intradayDate})</b>`,showarrow:false,xanchor:"center",yanchor:"bottom",font:{family:"Arial, sans-serif",size:11,color:"#475569"}},{xref:`x${rightAxisStart}`,yref:`y${rightAxisStart} domain`,x:intradayRange[0],y:0,text:`Vortag: ${previousClose.toLocaleString("de-DE",{minimumFractionDigits:3,maximumFractionDigits:4})}`,showarrow:false,xanchor:"left",yanchor:"top",yshift:-15,font:{family:"Arial, sans-serif",size:10,color:"#475569"}});if(hasIntradayData){const latestPrice=intradayY.at(-1),changePct=(latestPrice/previousClose-1)*100,changeText=`${changePct>=0?"+":""}${changePct.toLocaleString("de-DE",{minimumFractionDigits:2,maximumFractionDigits:2})} %`,changeColor=changePct>=0?"#15803d":"#b91c1c",lastFraction=(intradayPoints.at(-1)[0]-sessionRange[0])/(sessionRange[1]-sessionRange[0]),changeAnchor=lastFraction<.72?"left":"right";layout.annotations.push({xref:`x${rightAxisStart}`,yref:`y${rightAxisStart}`,x:intradayX.at(-1),y:latestPrice,text:`<b>${changeText}</b>`,showarrow:false,xanchor:changeAnchor,yanchor:"middle",xshift:changeAnchor==="left"?6:-6,font:{family:"Arial, sans-serif",size:10,color:changeColor},bgcolor:"rgba(255,255,255,.82)",borderpad:2});}}
+  if(hasIntraday){const intradayDate=new Date(sessionReference).toLocaleDateString("de-DE",{day:"2-digit",month:"2-digit",year:"numeric"}),intradayValues=[intradayY,[previousClose]],intradayDomain=[0,1];layout[`yaxis${rightAxisStart}`]={domain:intradayDomain,range:paddedRange(intradayValues),side:"right",showticklabels:true,tickformat:".3f",nticks:7,tickfont:{family:"Arial, sans-serif",size:9,color:"#64748b"},showgrid:false,showline:false,zeroline:false,ticks:"",automargin:true};layout.shapes.push({name:"intraday-background",type:"rect",xref:"paper",yref:"paper",x0:rightDomain[0],x1:rightDomain[1],y0:0,y1:1,fillcolor:"rgba(100,116,139,.075)",line:{width:0},layer:"below"},{name:"previous-close-reference",type:"line",xref:`x${rightAxisStart}`,yref:`y${rightAxisStart}`,x0:intradayRange[0],x1:intradayRange[1],y0:previousClose,y1:previousClose,line:{color:"#0f172a",width:1.5,dash:"dot"},layer:"below"});layout.annotations.push({xref:"paper",yref:"paper",x:.455,y:1.035,text:"<b>Daily Historical</b>",showarrow:false,xanchor:"center",yanchor:"bottom",font:{family:"Arial, sans-serif",size:11,color:"#475569"}},{xref:"paper",yref:"paper",x:(rightDomain[0]+rightDomain[1])/2,y:1.035,text:`<b>Intraday (${intradayDate})</b>`,showarrow:false,xanchor:"center",yanchor:"bottom",font:{family:"Arial, sans-serif",size:10,color:"#475569"}});if(hasIntradayData){const latestPrice=intradayY.at(-1),changePct=(latestPrice/previousClose-1)*100,changeText=`${changePct>=0?"+":""}${changePct.toLocaleString("de-DE",{minimumFractionDigits:2,maximumFractionDigits:2})} %`,changeColor=changePct>=0?"#15803d":"#b91c1c";layout.annotations.push({xref:`x${rightAxisStart}`,yref:`y${rightAxisStart}`,x:intradayX.at(-1),y:latestPrice,text:`<b>${changeText}</b>`,showarrow:false,xanchor:"right",yanchor:"middle",xshift:-3,font:{family:"Arial, sans-serif",size:9,color:changeColor},bgcolor:"rgba(255,255,255,.82)",borderpad:1});}}
   const noZeroAxes=[];
   panels.forEach((panel,index)=>{
-    const axis=index+2,miniAxis=rightAxisStart+index+1,top=1-main-index*small,bottom=Math.max(0,top-small),isPhaseRegression=panel.kind==="whittaker-phase-regression",isPhaseResidual=panel.kind==="whittaker-phase-residual",allPanelValues=isPhaseRegression?[panel.actualY,...panel.segments.map(segment=>segment.regression)]:isPhaseResidual?panel.segments.map(segment=>segment.residualPct):panel.bar?[panel.bar]:panel.series,includeZero=!isPhaseRegression;
+    const axis=index+2,top=1-main-index*small,bottom=Math.max(0,top-small),isPhaseRegression=panel.kind==="whittaker-phase-regression",isPhaseResidual=panel.kind==="whittaker-phase-residual",allPanelValues=isPhaseRegression?[panel.actualY,...panel.segments.map(segment=>segment.regression)]:isPhaseResidual?panel.segments.map(segment=>segment.residualPct):panel.bar?[panel.bar]:panel.series,includeZero=!isPhaseRegression;
     if(isPhaseRegression)noZeroAxes.push(`yaxis${axis}`);
     layout[`xaxis${axis}`]={...axisBase(dailyFull),domain:leftDomain,range:xRange,anchor:`y${axis}`,matches:"x",showticklabels:index===panels.length-1,hoverformat:"%d.%m.%Y"};layout[`yaxis${axis}`]={domain:[bottom,top],range:paddedRange(allPanelValues,includeZero),showgrid:false,showline:false,zeroline:false,showticklabels:isPhaseRegression||isPhaseResidual,tickformat:isPhaseResidual?".2f":isPhaseRegression?".3f":undefined,ticks:"",tickfont:{size:9,color:"#64748b"}};
     if(includeZero)layout.shapes.push({type:"line",xref:"paper",x0:0,x1:leftDomain[1],yref:`y${axis}`,y0:0,y1:0,line:{color:"#111827",width:.55},layer:"above"});
@@ -271,24 +267,6 @@ function renderTools(){
       });
     }else if(panel.bar)traces.push({x:dailyX,y:panel.bar,type:"bar",name:panel.label,showlegend:false,marker:{color:panel.bar.map(v=>v>=0?"#16a34a":"#dc2626")},xaxis:`x${axis}`,yaxis:`y${axis}`,hovertemplate:"Steigung zum Vortag: %{y:.4f}<extra></extra>"});else panel.series.forEach((series,i)=>traces.push(...splitSigned(dailyX,series,axis,panel.series.length>1?(i?"Kurs - Lower Band":"Kurs - Upper Band"):panel.label)));
 
-    if(hasIntraday){
-      const miniValues=isPhaseRegression?[panel.intradayActual||[],panel.intradayRegression||[]]:isPhaseResidual?[panel.intradayResidual||[]]:panel.intradayBar?[panel.intradayBar]:(panel.intradaySeries||[]),miniIncludeZero=!isPhaseRegression;
-      layout[`xaxis${miniAxis}`]={...axisBase(intradayPoints),domain:rightDomain,range:intradayRange,anchor:`y${miniAxis}`,showticklabels:false,hoverformat:"%H:%M",showgrid:false,showline:false,ticks:""};
-      layout[`yaxis${miniAxis}`]={domain:[bottom,top],range:paddedRange(miniValues,miniIncludeZero),showgrid:false,showline:false,zeroline:false,showticklabels:false,ticks:""};
-      layout.shapes.push({type:"rect",xref:"paper",yref:"paper",x0:rightDomain[0],x1:rightDomain[1],y0:bottom,y1:top,fillcolor:"rgba(100,116,139,.065)",line:{width:0},layer:"below"});
-      if(miniIncludeZero)layout.shapes.push({type:"line",xref:"paper",x0:rightDomain[0],x1:rightDomain[1],yref:`y${miniAxis}`,y0:0,y1:0,line:{color:"rgba(15,23,42,.45)",width:.5},layer:"above"});
-      if(isPhaseRegression){
-        if(panel.intradayActual?.length)traces.push({...lineTrace(intradayX,panel.intradayActual,"Intraday-Kurs","#0f172a","solid",miniAxis,1.35),showlegend:false,hoverinfo:"skip"});
-        if(panel.intradayRegression?.length)traces.push(...splitByDirection(intradayX,panel.intradayRegression,panel.intradayDirection||[],miniAxis,"Intraday-Phasenregression",1.55));
-        noZeroAxes.push(`yaxis${miniAxis}`);
-      }else if(isPhaseResidual){
-        if(panel.intradayResidual?.length)traces.push(...splitByDirection(intradayX,panel.intradayResidual,panel.intradayDirection||[],miniAxis,"Intraday-Abweichung",1.45));
-      }else if(panel.intradayBar){
-        traces.push({x:intradayX,y:panel.intradayBar,type:"bar",name:`${panel.label} Intraday`,showlegend:false,marker:{color:panel.intradayBar.map(v=>Number.isFinite(v)&&v>=0?"#16a34a":"#dc2626")},xaxis:`x${miniAxis}`,yaxis:`y${miniAxis}`,hoverinfo:"skip"});
-      }else if(panel.intradaySeries){
-        panel.intradaySeries.forEach((series,i)=>traces.push(...splitSigned(intradayX,series,miniAxis,panel.intradaySeries.length>1?(i?"Intraday Lower":"Intraday Upper"):`${panel.label} Intraday`)));
-      }
-    }
   });
   if(hasIntraday)layout[`xaxis${rightAxisStart}`]={...axisBase(intradayPoints),domain:rightDomain,range:intradayRange,anchor:`y${rightAxisStart}`,showticklabels:true,tickformat:"%H:%M",nticks:3,ticklabelposition:"inside bottom",tickfont:{family:"Arial, sans-serif",size:10,color:"#64748b"},showgrid:false,showline:false,ticks:""};for(let index=0;index<rows;index++){const suffix=index?`${index+1}`:"",leftX=suffix?`x${suffix}`:"x",yref=suffix?`y${suffix} domain`:"y domain";layout.shapes.push({name:`cross-panel-marker-left-${index+1}`,type:"line",xref:leftX,yref,x0:dailyX[0],x1:dailyX[0],y0:0,y1:1,line:{color:"rgba(37,99,235,.68)",width:1,dash:"dash"},layer:"above",visible:false});if(hasIntraday&&index===0){const markerX=intradayX[0]||intradayRange[0];layout.shapes.push({name:"cross-panel-marker-right-1",type:"line",xref:`x${rightAxisStart}`,yref:`y${rightAxisStart} domain`,x0:markerX,x1:markerX,y0:0,y1:1,line:{color:"rgba(37,99,235,.68)",width:1,dash:"dash"},layer:"above",visible:false});}}
   window.__alignToolRangeCard=()=>alignToolRangeCard(hasIntraday);Plotly.react("toolsChart",traces,layout,PLOT_CONFIG).then(()=>{const graph=plotlyGraph("toolsChart");if(graph){graph.__msciSymmetricCenters=hasIntraday?{[`yaxis${rightAxisStart}`]:previousClose}:{};graph.__msciNoZeroAxes=noZeroAxes;}installCrossPanelHover("toolsChart");installVisibleYAutoscale("toolsChart");alignToolRangeCard(hasIntraday);});
@@ -329,14 +307,14 @@ function backtestSignals(rows,type,calculationStart){const points=backtestSignal
   if(type==="kalman"){const values=kalman2d(points,Math.max(.001,+$("btKalmanQ").value||1),Math.max(.001,+$("btKalmanR").value||25));for(let i=1;i<values.length;i++){filter[i]=values[i];signals[i]=filterSlope(values,i);}return {signals,filter};}
   if(type==="regression"){const window=Math.max(3,+$("btRegressionWindow").value||182);for(let i=Math.max(2,calculationStart);i<points.length;i++){const sample=points.slice(Math.max(0,i-window+1),i+1),fitted=regression(sample,window);filter[i]=fitted.at(-1);signals[i]=filterSlope(fitted,fitted.length-1);}return {signals,filter};}
   if(type==="bollinger"){const window=Math.max(2,+$("btBollingerWindow").value||20),multiple=Math.max(.1,+$("btBollingerStd").value||2),bands=rolling(points.map(p=>p[1]),window,multiple);for(let i=0;i<points.length;i++){const upper=bands.upper[i],lower=bands.lower[i];filter[i]=bands.mid[i];if(Number.isFinite(upper)&&Number.isFinite(lower)&&upper!==lower)signals[i]=(points[i][1]-lower)/(upper-lower)*100;}return {signals,filter,bands};}
-  const window=Math.max(10,+$("btWhittakerWindow").value||250),lambda=Math.max(.1,+$("btWhittakerLambda").value||1000),phaseRegression=Array(rows.length).fill(null),phaseDirection=Array(rows.length).fill(null);
+  const window=Math.max(10,+$("btWhittakerWindow").value||250),lambda=Math.max(.1,+$("btWhittakerLambda").value||1000),holdout=Math.max(0,Math.floor(+$("btWhittakerHoldout").value||0)),phaseRegression=Array(rows.length).fill(null),phaseDirection=Array(rows.length).fill(null);
   // Strict walk-forward: for the signal on day i, the Whittaker filter and phase
-  // regression are estimated only with data available through i-10. The fitted
-  // phase line is then extrapolated across the ten held-out trading days to i.
-  // This prevents those ten days (including day i) from reshaping the smoother
-  // or the phase that generated the regression signal.
+  // regression are estimated only with data available through i-holdout. The fitted
+  // phase line is then extrapolated across the held-out trading days to i.
+  // This prevents those days (including day i when holdout > 0) from reshaping
+  // the smoother or the phase that generated the regression signal.
   for(let i=Math.max(2,calculationStart);i<points.length;i++){
-    const fitGlobalEnd=i-WHITTAKER_REGRESSION_HOLDOUT_DAYS;if(fitGlobalEnd<2)continue;
+    const fitGlobalEnd=i-holdout;if(fitGlobalEnd<2)continue;
     const first=Math.max(0,fitGlobalEnd-window+1),fitSample=points.slice(first,fitGlobalEnd+1),smooth=whittakerEilers(fitSample,lambda),fitEnd=smooth.length-1;
     filter[i]=smooth.at(-1);
     if(fitEnd<1)continue;
