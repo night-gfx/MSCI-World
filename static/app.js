@@ -189,7 +189,7 @@ function installVisibleYAutoscale(graphId){
       const suffix=axisName.slice(5),traceAxis=suffix?`y${suffix}`:"y",values=[];
       for(const trace of graph.data){
         if((trace.yaxis||"y")!==traceAxis||trace.meta==="trend-fill"||!Array.isArray(trace.x)||!Array.isArray(trace.y))continue;
-        trace.y.forEach((value,index)=>{const timestamp=new Date(trace.x[index]).getTime(),numeric=+value,intraday=trace.meta==="intraday-extension";if(Number.isFinite(numeric)&&(intraday||(Number.isFinite(timestamp)&&timestamp>=start&&timestamp<=end)))values.push(numeric);});
+        trace.y.forEach((value,index)=>{if(value===null||value===undefined||value==="")return;const timestamp=new Date(trace.x[index]).getTime(),numeric=Number(value),intraday=trace.meta==="intraday-extension";if(Number.isFinite(numeric)&&(intraday||(Number.isFinite(timestamp)&&timestamp>=start&&timestamp<=end)))values.push(numeric);});
       }
       const symmetricCenter=graph.__msciSymmetricCenters?.[axisName],includeZero=(graphId==="toolsChart"&&axisName!=="yaxis"&&!graph.__msciNoZeroAxes?.includes(axisName))||Boolean(graph.__msciZeroCenteredAxes?.includes(axisName)),range=Number.isFinite(symmetricCenter)?symmetricPriceRange([values],symmetricCenter):paddedRange([values],includeZero);if(range)updates[`${axisName}.range`]=range;
     }
