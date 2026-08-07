@@ -1,9 +1,10 @@
 const $ = id => document.getElementById(id);
 const PARAM_IDS = ["showRegression","regShort","regMedium","regLong","showBollinger","bollingerWindow","bollingerStd","showKalman","kalmanQ","kalmanR","showWhittaker","smoothLambda","whittakerRegressionHoldout"];
+const WT_BT_IDS = ["wtBtWindow","wtBtConfirmDays","wtBtCapital","wtBtSpread","wtBtRange","wtBtBuyOperator","wtBtBuyValue","wtBtSellOperator","wtBtSellValue"];
 const RANGE_OPTIONS = [["6 Monate","6m"],["1 Jahr","1y"],["2 Jahre","2y"],["5 Jahre","5y"],["Max","max"]];
 const ANALYTICS_RANGE_OPTIONS = RANGE_OPTIONS;
 const WHITTAKER_REGRESSION_HOLDOUT_DAYS = 10;
-let payload, activeTab="tools", toolRange="6m", analyticsRange="max", backtestRange="5y", selectedTrade=null,backtestResults={};
+let payload, activeTab="tools", toolRange="6m", analyticsRange="max", backtestRange="5y", selectedTrade=null,backtestResults={},whittakerSimulationTimer=null,whittakerSimulationRunning=false,whittakerSimulationMode=false,whittakerSimulationStartTimestamp=null,whittakerToolsBacktestTimer=null,wtSpreadInstrument=null;
 const saved = JSON.parse(localStorage.getItem("msci-world-defaults") || "{}");
 for (const id of PARAM_IDS) if (saved[id] !== undefined) $(id)[$(id).type === "checkbox" ? "checked" : "value"] = saved[id];
 
@@ -97,6 +98,18 @@ function whittakerTrendRegressions(points,values,holdoutDays=WHITTAKER_REGRESSIO
   return {analysisIndex,fitEnd,holdout,pivots,completed,active,phases,activeStart};
 }
 function whittakerPivotKind(values,index){const before=values[index]-values[index-1],after=values[index+1]-values[index];return before>0&&after<0?"Hoch":before<0&&after>0?"Tief":"Wende";}
+function strictWhittakerWalkForwardState(points,index,{window=250,lambda=1000,holdout=10,confirmDays=5}={}){
+  const fitGlobalEnd=index-Math.max(0,Math.floor(holdout));if(index<2||fitGlobalEnd<2)return null;
+  const first=Math.max(0,fitGlobalEnd-Math.max(20,Math.floor(window))+1),fitSample=points.slice(first,fitGlobalEnd+1),smooth=whittakerEilers(fitSample,lambda),fitEnd=smooth.length-1;
+  if(fitEnd<1)return null;
+  const pivots=whittakerTurningPoints(smooth,fitEnd);let phaseStart=pivots.length?pivots.at(-1):0;
+  if(fitEnd-phaseStart<1&&pivots.length>1)phaseStart=pivots.at(-2);
+  if(fitEnd-phaseStart<1)phaseStart=Math.max(0,fitEnd-20);
+  if(fitEnd-phaseStart<1)return null;
+  const model=linearFitFiltered(fitSample,smooth,phaseStart,fitEnd);if(!model)return null;
+  const projectionIndex=fitEnd+(index-fitGlobalEnd),estimate=model.valueAtIndex(projectionIndex),direction=model.slope>=0?1:-1,phaseAge=fitEnd-phaseStart+1,confirmed=phaseAge>=Math.max(1,Math.floor(confirmDays)),eligible=direction>0&&confirmed,signal=Number.isFinite(estimate)&&estimate!==0?(points[index][1]/estimate-1)*100:null;
+  return {index,fitGlobalEnd,first,fitEnd,fitSample,smooth,pivots,phaseStart,phaseStartGlobal:first+phaseStart,model,estimate,direction,phaseAge,confirmed,eligible,signal};
+}
 function tradingBreaks(points){
   if(!points.length)return [{bounds:["sat","mon"]}];const present=new Set(points.map(p=>dateKey(p[0]))),missing=[],cursor=new Date(`${dateKey(points[0][0])}T00:00:00Z`),end=new Date(`${dateKey(points.at(-1)[0])}T00:00:00Z`);
   while(cursor<=end){const day=cursor.getUTCDay();if(day!==0&&day!==6&&!present.has(dateKey(cursor)))missing.push(dateKey(cursor));cursor.setUTCDate(cursor.getUTCDate()+1);}
@@ -199,8 +212,45 @@ function alignToolRangeCard(hasIntraday){
 }
 if(!window.__msciRangeCardResize){window.__msciRangeCardResize=true;window.addEventListener("resize",()=>setTimeout(()=>window.__alignToolRangeCard?.(),80));}
 
-function renderTools(){
-  const source=toolsSeries(),dailyFull=source.daily,dailyY=pointPrices(dailyFull),dailyPoints=filterRange(dailyFull,toolRange),dailyStart=dailyFull.findIndex(point=>point[0]===dailyPoints[0][0]),dailyX=pointDates(dailyPoints),visibleDailyY=pointPrices(dailyPoints),intradayPoints=source.intraday,intradayX=pointDates(intradayPoints),intradayY=pointPrices(intradayPoints),hasIntraday=true,hasIntradayData=intradayPoints.length>0,sessionReference=hasIntradayData?intradayPoints[0][0]:Date.parse(`${source.sessionDay}T12:00:00Z`),xRange=[new Date(dailyPoints[0][0]),new Date(dailyPoints.at(-1)[0])];
+function whittakerSimulationDates(){return payload?toolsSeries().daily:[];}
+function stopWhittakerSimulation(renderBacktest=false){
+  if(whittakerSimulationTimer){clearTimeout(whittakerSimulationTimer);whittakerSimulationTimer=null;}
+  whittakerSimulationRunning=false;
+  if($("whittakerSimPlay"))$("whittakerSimPlay").disabled=false;
+  if($("whittakerSimPause"))$("whittakerSimPause").disabled=true;
+  if(renderBacktest&&payload)renderWhittakerToolsBacktest();
+}
+function syncWhittakerSimulationControls(points){
+  const slider=$("whittakerSimSlider"),label=$("whittakerSimDate");if(!slider||!label||!points?.length)return;
+  const max=points.length-1,cutoff=toolRange==="max"?-Infinity:rangeStart(points.at(-1)[0],toolRange);let min=Math.max(2,points.findIndex(point=>point[0]>=cutoff));if(min<2)min=2;
+  slider.min=String(Math.min(min,max));slider.max=String(max);
+  const asOf=$("whittakerAsOfDate")?.value;
+  if(asOf){const limit=Date.parse(`${asOf}T23:59:59.999Z`);let index=points.findLastIndex(point=>point[0]<=limit);if(index<min)index=min;slider.value=String(Math.min(max,index));label.textContent=fmtDate(points[Math.min(max,index)][0]);}
+  else if(!whittakerSimulationRunning){slider.value=String(max);label.textContent="Aktuell";}
+}
+function setWhittakerSimulationIndex(index,render=true){
+  const points=whittakerSimulationDates(),slider=$("whittakerSimSlider");if(!points.length||!slider)return;
+  const min=+slider.min||2,max=+slider.max||points.length-1,next=Math.max(min,Math.min(max,Math.floor(index)));
+  whittakerSimulationMode=true;if(!Number.isFinite(whittakerSimulationStartTimestamp))whittakerSimulationStartTimestamp=points[min][0];
+  slider.value=String(next);$("showWhittaker").checked=true;$("whittakerAsOfDate").value=dateKey(points[next][0]);$("whittakerSimDate").textContent=fmtDate(points[next][0]);
+  if(render)renderTools(true);
+}
+function startWhittakerSimulation(){
+  const points=whittakerSimulationDates(),slider=$("whittakerSimSlider");if(points.length<3||!slider)return;
+  stopWhittakerSimulation(false);$("showWhittaker").checked=true;syncWhittakerSimulationControls(points);
+  const min=+slider.min||2,max=+slider.max||points.length-1,current=+$("whittakerSimSlider").value||max;whittakerSimulationMode=true;whittakerSimulationStartTimestamp=points[min][0];if(!$("whittakerAsOfDate").value||current>=max)setWhittakerSimulationIndex(min,true);
+  whittakerSimulationRunning=true;$("whittakerSimPlay").disabled=true;$("whittakerSimPause").disabled=false;
+  const tick=()=>{if(!whittakerSimulationRunning)return;const now=+$("whittakerSimSlider").value||min;if(now>=max){stopWhittakerSimulation(true);return;}setWhittakerSimulationIndex(now+1,true);whittakerSimulationTimer=setTimeout(tick,Math.max(80,+$("whittakerSimSpeed").value||500));};
+  whittakerSimulationTimer=setTimeout(tick,Math.max(80,+$("whittakerSimSpeed").value||500));
+}
+function resetWhittakerSimulation(){stopWhittakerSimulation(false);whittakerSimulationMode=false;whittakerSimulationStartTimestamp=null;$("whittakerAsOfDate").value="";const points=whittakerSimulationDates();syncWhittakerSimulationControls(points);renderTools(false);}
+
+function renderTools(skipEmbeddedBacktest=false){
+  const source=toolsSeries(),rawDailyFull=source.daily,asOfInput=$("whittakerAsOfDate");if(asOfInput&&rawDailyFull.length)asOfInput.max=dateKey(rawDailyFull.at(-1)[0]);
+  const requestedAsOf=$("showWhittaker").checked&&asOfInput?.value?Date.parse(`${asOfInput.value}T23:59:59.999Z`):Infinity,historicalAsOf=Number.isFinite(requestedAsOf)&&rawDailyFull.length&&requestedAsOf<rawDailyFull.at(-1)[0],dailyFull=historicalAsOf?rawDailyFull.filter(point=>point[0]<=requestedAsOf):rawDailyFull;
+  if(!dailyFull.length)return;
+  const dailyY=pointPrices(dailyFull),dailyPoints=whittakerSimulationMode&&Number.isFinite(whittakerSimulationStartTimestamp)?dailyFull.filter(point=>point[0]>=whittakerSimulationStartTimestamp):filterRange(dailyFull,toolRange),dailyStart=dailyFull.findIndex(point=>point[0]===dailyPoints[0][0]),dailyX=pointDates(dailyPoints),visibleDailyY=pointPrices(dailyPoints),intradayPoints=historicalAsOf?[]:source.intraday,intradayX=pointDates(intradayPoints),intradayY=pointPrices(intradayPoints),hasIntraday=!historicalAsOf,hasIntradayData=intradayPoints.length>0,sessionReference=hasIntradayData?intradayPoints[0][0]:Date.parse(`${source.sessionDay}T12:00:00Z`),xRange=[new Date(dailyPoints[0][0]),new Date(dailyPoints.at(-1)[0])];
+  syncWhittakerSimulationControls(rawDailyFull);
   const historicalDifference=values=>visibleDailyY.map((price,index)=>Number.isFinite(values[index])?price-values[index]:null);
   const traces=[{...lineTrace(dailyX,visibleDailyY,currentInstrument().name,"#0f172a","solid",1,2.5),customdata:dailyPoints.map(point=>toolsHoverLabel(point[0])),hovertemplate:`%{customdata}<br>${currentInstrument().name}: %{y:.4f}<extra></extra>`}],panels=[];
   if($("showBollinger").checked){
@@ -220,8 +270,7 @@ function renderTools(){
     traces.push(...splitTrend(dailyX,k,"Kalman 2D"));const fullBar=fullK.map((value,index)=>index?value-fullK[index-1]:null);panels.push({label:"Kalman-Steigung zum Vortag",color:"#db2777",bar:fullBar.slice(dailyStart)});
   }
   if($("showWhittaker").checked){
-    const lambda=Math.max(.1,+$("smoothLambda").value||1000),asOfInput=$("whittakerAsOfDate");if(asOfInput&&dailyFull.length)asOfInput.max=dateKey(dailyFull.at(-1)[0]);
-    const asOfTimestamp=asOfInput?.value?Date.parse(`${asOfInput.value}T23:59:59.999Z`):Infinity,analysisPoints=dailyFull.filter(point=>point[0]<=asOfTimestamp);
+    const lambda=Math.max(.1,+$("smoothLambda").value||1000),analysisPoints=dailyFull;
     if(analysisPoints.length>=3){
       const fullSmooth=whittakerEilers(analysisPoints,lambda),filterOnDaily=Array(dailyFull.length).fill(null);for(let i=0;i<fullSmooth.length;i++)filterOnDaily[i]=fullSmooth[i];const smooth=filterOnDaily.slice(dailyStart);
       traces.push(...splitTrend(dailyX,smooth,"Whittaker–Eilers-Smoother · aktueller Anker",visibleDailyY));
@@ -270,6 +319,7 @@ function renderTools(){
   });
   if(hasIntraday)layout[`xaxis${rightAxisStart}`]={...axisBase(intradayPoints),domain:rightDomain,range:intradayRange,anchor:`y${rightAxisStart}`,showticklabels:true,tickformat:"%H:%M",nticks:3,ticklabelposition:"inside bottom",tickfont:{family:"Arial, sans-serif",size:10,color:"#64748b"},showgrid:false,showline:false,ticks:""};for(let index=0;index<rows;index++){const suffix=index?`${index+1}`:"",leftX=suffix?`x${suffix}`:"x",yref=suffix?`y${suffix} domain`:"y domain";layout.shapes.push({name:`cross-panel-marker-left-${index+1}`,type:"line",xref:leftX,yref,x0:dailyX[0],x1:dailyX[0],y0:0,y1:1,line:{color:"rgba(37,99,235,.68)",width:1,dash:"dash"},layer:"above",visible:false});if(hasIntraday&&index===0){const markerX=intradayX[0]||intradayRange[0];layout.shapes.push({name:"cross-panel-marker-right-1",type:"line",xref:`x${rightAxisStart}`,yref:`y${rightAxisStart} domain`,x0:markerX,x1:markerX,y0:0,y1:1,line:{color:"rgba(37,99,235,.68)",width:1,dash:"dash"},layer:"above",visible:false});}}
   window.__alignToolRangeCard=()=>alignToolRangeCard(hasIntraday);Plotly.react("toolsChart",traces,layout,PLOT_CONFIG).then(()=>{const graph=plotlyGraph("toolsChart");if(graph){graph.__msciSymmetricCenters=hasIntraday?{[`yaxis${rightAxisStart}`]:previousClose}:{};graph.__msciNoZeroAxes=noZeroAxes;}installCrossPanelHover("toolsChart");installVisibleYAutoscale("toolsChart");alignToolRangeCard(hasIntraday);});
+  if(!skipEmbeddedBacktest)renderWhittakerToolsBacktest();
 }
 
 function tradeStoreKey(){ return `msci-world-trades-${instrumentKey()}`; }
@@ -333,6 +383,54 @@ function runBacktest(rows,signals,type,start){const capital=Math.max(10,+$("btCa
   for(let i=start;i<rows.length;i++){const signal=signals[i-1],open=rows[i][1],close=rows[i][4];if(!shares&&compareSignal(signal,buyOperator,buyThreshold)&&cash>1){const ask=open*(1+spread),spend=cash-1;shares=spend/ask;basis=cash;cash=0;fees+=1;trades.push({side:"Kauf",signalDate:rows[i-1][0],date:rows[i][0],price:ask,chartPrice:close,cost:1,tax:0,capital:shares*close});}else if(shares&&compareSignal(signal,sellOperator,sellThreshold)){const bid=open*(1-spread),gross=shares*bid-1,profit=gross-basis,tax=Math.max(0,profit)*.25;cash=gross-tax;taxes+=tax;fees+=1;shares=0;basis=0;trades.push({side:"Verkauf",signalDate:rows[i-1][0],date:rows[i][0],price:bid,chartPrice:close,cost:1,tax,capital:cash});}const equity=cash+shares*close;peak=Math.max(peak,equity);maxDrawdown=Math.min(maxDrawdown,equity/peak-1);curve.push([rows[i][0],equity]);}
   const final=curve.at(-1)?.[1]??capital;return {type,curve,trades,capital,final,returnPct:(final/capital-1)*100,maxDrawdown:maxDrawdown*100,taxes,fees,open:shares>0};
 }
+
+function runWhittakerLongOnlyBacktest(rows,computed,start){
+  const capital=Math.max(10,+$("wtBtCapital").value||10000),spread=Math.max(0,+$("wtBtSpread").value||0)/20000,buyOperator=$("wtBtBuyOperator").value,buyThreshold=+$("wtBtBuyValue").value||0,sellOperator=$("wtBtSellOperator").value,sellThreshold=+$("wtBtSellValue").value||0;
+  let cash=capital,shares=0,basis=0,taxes=0,fees=0,peak=capital,maxDrawdown=0;const curve=[],trades=[];
+  for(let i=start;i<rows.length;i++){
+    const signalIndex=i-1,signal=computed.signals[signalIndex],eligible=!!computed.eligible[signalIndex],open=rows[i][1],close=rows[i][4];
+    if(!shares&&eligible&&compareSignal(signal,buyOperator,buyThreshold)&&cash>1){
+      const ask=open*(1+spread),spend=cash-1;shares=spend/ask;basis=cash;cash=0;fees+=1;trades.push({side:"Kauf",signalDate:rows[signalIndex][0],date:rows[i][0],price:ask,chartPrice:close,cost:1,tax:0,capital:shares*close,reason:"Bestätigte grüne Phase"});
+    }else if(shares){
+      const regimeExit=!eligible,signalExit=eligible&&compareSignal(signal,sellOperator,sellThreshold);
+      if(regimeExit||signalExit){
+        const bid=open*(1-spread),gross=shares*bid-1,profit=gross-basis,tax=Math.max(0,profit)*.25;cash=gross-tax;taxes+=tax;fees+=1;shares=0;basis=0;trades.push({side:"Verkauf",signalDate:rows[signalIndex][0],date:rows[i][0],price:bid,chartPrice:close,cost:1,tax,capital:cash,reason:regimeExit?"Regime-Exit":"Abweichungssignal"});
+      }
+    }
+    const equity=cash+shares*close;peak=Math.max(peak,equity);maxDrawdown=Math.min(maxDrawdown,equity/peak-1);curve.push([rows[i][0],equity]);
+  }
+  const final=curve.at(-1)?.[1]??capital;return {type:"whittaker-tools",curve,trades,capital,final,returnPct:(final/capital-1)*100,maxDrawdown:maxDrawdown*100,taxes,fees,open:shares>0};
+}
+function calculateWhittakerToolsWalkForward(rows,calculationStart){
+  const points=backtestSignalPoints(rows,"whittaker"),window=Math.max(20,+$("wtBtWindow").value||250),lambda=Math.max(.1,+$("smoothLambda").value||1000),holdout=Math.max(0,Math.floor(+$("whittakerRegressionHoldout").value||0)),confirmDays=Math.max(1,Math.floor(+$("wtBtConfirmDays").value||5)),signals=Array(rows.length).fill(null),phaseRegression=Array(rows.length).fill(null),phaseDirection=Array(rows.length).fill(null),phaseAge=Array(rows.length).fill(null),confirmed=Array(rows.length).fill(false),eligible=Array(rows.length).fill(false);
+  for(let i=Math.max(2,calculationStart);i<points.length;i++){
+    const state=strictWhittakerWalkForwardState(points,i,{window,lambda,holdout,confirmDays});if(!state)continue;
+    signals[i]=state.signal;phaseRegression[i]=state.estimate;phaseDirection[i]=state.direction;phaseAge[i]=state.phaseAge;confirmed[i]=state.confirmed;eligible[i]=state.eligible;
+  }
+  return {points,signals,phaseRegression,phaseDirection,phaseAge,confirmed,eligible,window,lambda,holdout,confirmDays};
+}
+function renderWhittakerToolsBacktest(){
+  const section=$("whittakerToolsBacktest");if(!section)return;const active=$("showWhittaker").checked;section.classList.toggle("hidden",!active);if(!active||!payload)return;
+  const key=instrumentKey();if(wtSpreadInstrument!==key){$("wtBtSpread").value=DEFAULT_SPREADS[key]??10;wtSpreadInstrument=key;}
+  let rows=backtestOhlc();const asOf=$("whittakerAsOfDate").value;if(asOf){const limit=Date.parse(`${asOf}T23:59:59.999Z`);rows=rows.filter(row=>row[0]<=limit);}
+  if(rows.length<30){$("wtBacktestChart").innerHTML="<div class='backtest-empty'>Für diesen Stand fehlen ausreichende Tagesdaten.</div>";return;}
+  const range=$("wtBtRange").value||"5y",cutoff=rangeStart(rows.at(-1)[0],range),start=Math.max(1,rows.findIndex(row=>row[0]>=cutoff)),window=Math.max(20,+$("wtBtWindow").value||250),holdout=Math.max(0,Math.floor(+$("whittakerRegressionHoldout").value||0)),confirmDays=Math.max(1,Math.floor(+$("wtBtConfirmDays").value||5)),calculationStart=Math.max(2,start-window-holdout-confirmDays-5),computed=calculateWhittakerToolsWalkForward(rows,calculationStart),result=runWhittakerLongOnlyBacktest(rows,computed,start);
+  const visible=rows.slice(start),dates=visible.map(row=>new Date(row[0])),signalPoints=computed.points.slice(start),prices=signalPoints.map(point=>point[1]),regression=computed.phaseRegression.slice(start),direction=computed.phaseDirection.slice(start),eligible=computed.eligible.slice(start),phaseAge=computed.phaseAge.slice(start),signals=computed.signals.slice(start),eligibleRegression=regression.map((value,i)=>eligible[i]&&direction[i]>0?value:null),eligibleSignals=signals.map((value,i)=>eligible[i]?value:null),traces=[{...lineTrace(dates,prices,"Last Price / Tages-Close","#0f172a","solid",1,1.7),hovertemplate:"Kurs: %{y:.4f}<extra></extra>"},{...lineTrace(dates,eligibleRegression,"Bestätigte grüne Phasenregression","#16a34a","solid",1,2.4),connectgaps:false,hovertemplate:"Grüne Regression: %{y:.4f}<extra></extra>"}];
+  for(const side of ["Kauf","Verkauf"]){
+    const selected=result.trades.filter(trade=>trade.side===side),markerY=selected.map(trade=>{const index=rows.findIndex(row=>row[0]===trade.date);return index>=0?computed.points[index][1]:trade.chartPrice;});
+    traces.push({x:selected.map(trade=>new Date(trade.date)),y:markerY,type:"scatter",mode:"markers",name:side,marker:{symbol:side==="Kauf"?"triangle-up":"triangle-down",size:12,color:side==="Kauf"?"#16a34a":"#dc2626",line:{color:"#fff",width:1.1}},customdata:selected.map(trade=>[trade.reason,trade.price]),hovertemplate:`${side}<br>%{x|%d.%m.%Y}<br>%{customdata[0]}<br>Ausführung: %{customdata[1]:.4f}<extra></extra>`});
+  }
+  traces.push({x:dates,y:eligibleSignals,type:"bar",name:"Abweichung in bestätigter grüner Phase",showlegend:false,xaxis:"x2",yaxis:"y2",marker:{color:"#16a34a"},customdata:phaseAge,hovertemplate:"Kurs − Regression: %{y:+.3f} %<br>Bestätigtes Phasenalter: %{customdata} Tage<extra></extra>"});
+  const initial=Math.max(10,+$("wtBtCapital").value||10000),spread=Math.max(0,+$("wtBtSpread").value||0)/20000,firstAsk=visible[0][1]*(1+spread),buyShares=(initial-1)/firstAsk,buyHold=visible.map(row=>[row[0],buyShares*row[4]]);
+  traces.push({...lineTrace(pointDates(result.curve),pointPrices(result.curve),"Strategie nach Kosten/Steuer","#0891b2","solid",3,2.2),hovertemplate:"Strategie: %{y:.2f} €<extra></extra>"},{...lineTrace(pointDates(buyHold),pointPrices(buyHold),"Buy & Hold (offen)","#64748b","dot",3,1.5),hovertemplate:"Buy & Hold: %{y:.2f} €<extra></extra>"});
+  const shapes=[{type:"line",xref:"paper",x0:0,x1:1,yref:"y2",y0:0,y1:0,line:{color:"#64748b",width:1}},{type:"line",xref:"paper",x0:0,x1:1,yref:"y2",y0:+$("wtBtBuyValue").value||0,y1:+$("wtBtBuyValue").value||0,line:{color:"#16a34a",width:1,dash:"dot"}},{type:"line",xref:"paper",x0:0,x1:1,yref:"y2",y0:+$("wtBtSellValue").value||0,y1:+$("wtBtSellValue").value||0,line:{color:"#0e7490",width:1,dash:"dot"}}];
+  let regimeStart=null;eligible.forEach((value,i)=>{if(value&&regimeStart===null)regimeStart=dates[i];if(!value&&regimeStart!==null){shapes.push({type:"rect",xref:"x",yref:"paper",x0:regimeStart,x1:dates[i],y0:.52,y1:1,fillcolor:"rgba(22,163,74,.045)",line:{width:0},layer:"below"});regimeStart=null;}});if(regimeStart!==null)shapes.push({type:"rect",xref:"x",yref:"paper",x0:regimeStart,x1:dates.at(-1),y0:.52,y1:1,fillcolor:"rgba(22,163,74,.045)",line:{width:0},layer:"below"});
+  const layout={...baseLayout(),height:820,showlegend:true,bargap:.08,margin:{l:62,r:24,t:58,b:42},legend:{orientation:"h",x:0,y:1.07},xaxis:{...axisBase(signalPoints),domain:[0,1],anchor:"y",showticklabels:false,hoverformat:"%d.%m.%Y"},yaxis:{domain:[.52,1],range:paddedRange([prices,eligibleRegression]),tickformat:".3f",showgrid:true,gridcolor:"#f1f5f9"},xaxis2:{...axisBase(signalPoints),domain:[0,1],anchor:"y2",matches:"x",showticklabels:false,hoverformat:"%d.%m.%Y"},yaxis2:{domain:[.31,.45],range:paddedRange([eligibleSignals],true),ticksuffix:" %",tickformat:".3f",showgrid:true,gridcolor:"#f8fafc",zeroline:false},xaxis3:{...axisBase(visible.map(row=>[row[0],row[4]])),domain:[0,1],anchor:"y3",matches:"x",hoverformat:"%d.%m.%Y"},yaxis3:{domain:[0,.23],range:paddedRange([pointPrices(result.curve),pointPrices(buyHold)]),tickformat:",.0f",ticksuffix:" €",showgrid:true,gridcolor:"#f1f5f9"},annotations:[{xref:"paper",yref:"paper",x:0,y:1.02,text:`<b>Nur bestätigte grüne Phasen · Bestätigung nach ${confirmDays} Tagen</b>`,showarrow:false,xanchor:"left"},{xref:"paper",yref:"paper",x:0,y:.47,text:"<b>Kurs − Walk-forward-Phasenregression (%)</b>",showarrow:false,xanchor:"left"},{xref:"paper",yref:"paper",x:0,y:.26,text:"<b>Vermögensentwicklung</b>",showarrow:false,xanchor:"left"}],shapes};
+  $("wtBacktestChart").style.height="820px";Plotly.react("wtBacktestChart",traces,layout,PLOT_CONFIG).then(()=>{const graph=plotlyGraph("wtBacktestChart");if(graph)graph.__msciZeroCenteredAxes=["yaxis2"];installVisibleYAutoscale("wtBacktestChart");});
+  const tile=(label,value,tone)=>`<div class="metric"><span>${label}</span><strong${tone?` class="${tone}"`:""}>${value}</strong></div>`;$("wtBacktestMetrics").innerHTML=tile("Endkapital",`${fmt(result.final)} €`)+tile("Rendite",pct(result.returnPct),result.returnPct>=0?"positive":"negative")+tile("Max. Drawdown",pct(result.maxDrawdown),"negative")+tile("Ausführungen",result.trades.length)+tile("Bestätigung",`${confirmDays} Tage`)+tile("Regime","Nur grün · Long only");
+  $("wtBacktestEvaluation").innerHTML=comparisonEvaluationMarkup(pointPrices(result.curve),pointPrices(buyHold),pointDates(result.curve),true);
+  $("wtBacktestTradeRows").innerHTML=result.trades.length?result.trades.map(trade=>`<tr><td>${trade.side}</td><td>${fmtDate(trade.signalDate)}</td><td>${fmtDate(trade.date)}</td><td>${trade.reason}</td><td>${fmt(trade.price,4)} €</td><td>${fmt(trade.tax)} €</td><td>${fmt(trade.capital)} €</td></tr>`).join(""):`<tr><td colspan="7">Keine Trades mit den aktuellen Bestätigungs- und Abweichungsregeln.</td></tr>`;
+}
 function backtestName(type){return type==="regression"?"Lineare Regression":type==="kalman"?"Kalman-Filter 2D":type==="bollinger"?"Bollinger Bands":"Whittaker–Eilers";}
 function btStrategyValue(){return document.querySelector('input[name="btStrategyRadio"]:checked').value;}
 function renderBacktestTrades(){const result=backtestResults[btStrategyValue()],body=$("backtestTradeRows");body.innerHTML=result?.trades.length?result.trades.map(trade=>`<tr><td>${trade.side}</td><td>${fmtDate(trade.signalDate)}</td><td>${fmtDate(trade.date)}</td><td>${fmt(trade.price,4)} €</td><td>${fmt(trade.cost)} €</td><td>${fmt(trade.tax)} €</td><td>${fmt(trade.capital)} €</td></tr>`).join(""):`<tr><td colspan="7">Keine Trades für diese Regel.</td></tr>`;}
@@ -384,19 +482,24 @@ function renderAnalytics(){
   const layout={...baseLayout(),uirevision:`trading-analytics-${analyticsRange}`,showlegend:true,margin:{l:52,r:18,t:50,b:42},legend:{orientation:"h",x:0,y:1.08,xanchor:"left",yanchor:"bottom",font:{size:10},bgcolor:"rgba(255,255,255,0)"},xaxis:{...axisBase(currentInstrument().intraday),range:xRange,hoverformat:"%d.%m.%Y",rangeslider:{visible:false}},yaxis:{...axisBase(),range:paddedRange([buy,strategy]),zeroline:false,tickformat:".0f"},shapes};
   Plotly.react("analyticsChart",traces,layout,{responsive:true,displaylogo:false}).then(()=>installVisibleYAutoscale("analyticsChart"));
 }
-function renderAll(){ if(!payload)return; const inst=currentInstrument(); $("instrumentMeta").textContent=`${inst.name} · ISIN ${inst.isin} · Yahoo ${inst.ticker} · Trading Tools: Tagesdaten + aktuellster Intraday-Wert · Backtest: Tagesdaten · Trading Analytics: 5-Minuten-Daten`; renderTools(); renderAnalytics();if(activeTab==="backtest")renderBacktest(); history.replaceState(null,"",`?instrument=${encodeURIComponent(instrumentKey())}`); }
+function renderAll(){ if(!payload)return; const inst=currentInstrument(); $("instrumentMeta").textContent=`${inst.name} · ISIN ${inst.isin} · Yahoo ${inst.ticker} · Trading Tools: Tagesdaten + aktuellster Intraday-Wert · Whittaker-Backtest: Walk-forward/Long only · Trading Analytics: 5-Minuten-Daten`; renderTools(); renderAnalytics();if(activeTab==="backtest")renderBacktest(); history.replaceState(null,"",`?instrument=${encodeURIComponent(instrumentKey())}`); }
 function ranges(containerId,options,get,set){ const root=$(containerId); root.innerHTML=""; for(const [label,value] of options){ const b=document.createElement("button"); b.className=`range-button ${get()===value?"active":""}`; b.textContent=label;b.onclick=()=>{set(value);ranges(containerId,options,get,set);renderAll();};root.appendChild(b); } }
 function configureRanges(){ ranges("toolRanges",RANGE_OPTIONS,()=>toolRange,v=>toolRange=v); ranges("backtestRanges",RANGE_OPTIONS,()=>backtestRange,v=>backtestRange=v);ranges("analyticsRanges",ANALYTICS_RANGE_OPTIONS,()=>analyticsRange,v=>analyticsRange=v); }
 async function fetchData(manual=false){ $("reload").disabled=true;try{const response=await fetch(`data/dashboard.json?v=${Date.now()}`,{cache:"no-store"});if(!response.ok)throw Error(response.status);payload=await response.json();localStorage.setItem("msci-world-last-data",JSON.stringify(payload));$("notice").style.display="none";initializeInstrument();$("updated").textContent=`Stand ${new Date(payload.updated_at).toLocaleString("de-DE")} · automatische Aktualisierung stündlich`;if(manual)$("settingsMessage").textContent="Der neueste auf GitHub Pages veröffentlichte Datenstand wurde geladen.";renderAll();}catch(error){const cached=localStorage.getItem("msci-world-last-data");if(cached){payload=JSON.parse(cached);initializeInstrument();$("updated").textContent=`Gespeicherter Datenstand ${new Date(payload.updated_at).toLocaleString("de-DE")}`;$("notice").textContent="Offline: letzter gespeicherter Datenstand wird angezeigt.";$("notice").style.display="block";renderAll();}else{$("updated").textContent="Kein Datenstand verfügbar";$("notice").textContent=`Daten konnten nicht geladen werden (${error.message}).`;$('notice').style.display="block";}}finally{$("reload").disabled=false;}}
 async function fetchGitHubVersion(){try{const response=await fetch(`data/build-info.json?v=${Date.now()}`,{cache:"no-store"});if(!response.ok)throw Error(response.status);const info=await response.json(),date=new Date(info.deployed_at),stamp=Number.isNaN(date.getTime())?info.deployed_at:date.toLocaleString("de-DE",{dateStyle:"medium",timeStyle:"medium"});$("githubVersion").textContent=`GitHub-Version: ${stamp}${info.commit?` · ${info.commit}`:""}`;}catch{$("githubVersion").textContent="GitHub-Version: nicht verfügbar";}}
 function initializeInstrument(){ const old=instrumentKey(), requested=new URLSearchParams(location.search).get("instrument"), select=$("instrument");select.innerHTML="";for(const[key,inst]of Object.entries(payload.instruments)){const option=document.createElement("option");option.value=key;option.textContent=inst.name;select.appendChild(option);}select.value=payload.instruments[old]?old:payload.instruments[requested]?requested:Object.keys(payload.instruments)[0]; }
 
-$("instrument").onchange=()=>{selectedTrade=null;renderAll();}; $("reload").onclick=()=>{if(confirm("Veröffentlichten Kursdatenstand jetzt neu laden?"))fetchData(true);};
-for(const id of PARAM_IDS) $(id).addEventListener("input",renderTools);
-$("whittakerAsOfDate").addEventListener("change",renderTools);
-$("whittakerAsOfNow").onclick=()=>{$("whittakerAsOfDate").value="";renderTools();};
+$("instrument").onchange=()=>{stopWhittakerSimulation(false);selectedTrade=null;wtSpreadInstrument=null;renderAll();}; $("reload").onclick=()=>{if(confirm("Veröffentlichten Kursdatenstand jetzt neu laden?"))fetchData(true);};
+for(const id of PARAM_IDS) $(id).addEventListener("input",()=>{if(id==="showWhittaker"&&!$("showWhittaker").checked){stopWhittakerSimulation(false);whittakerSimulationMode=false;whittakerSimulationStartTimestamp=null;$("whittakerAsOfDate").value="";}renderTools();});
+$("whittakerAsOfDate").addEventListener("change",()=>{stopWhittakerSimulation(false);whittakerSimulationMode=false;whittakerSimulationStartTimestamp=null;renderTools();});
+$("whittakerAsOfNow").onclick=()=>resetWhittakerSimulation();
+$("whittakerSimPlay").onclick=startWhittakerSimulation;
+$("whittakerSimPause").onclick=()=>stopWhittakerSimulation(true);
+$("whittakerSimReset").onclick=resetWhittakerSimulation;
+$("whittakerSimSlider").addEventListener("input",()=>{stopWhittakerSimulation(false);setWhittakerSimulationIndex(+$("whittakerSimSlider").value,true);});
+for(const id of WT_BT_IDS){const control=$(id);if(control)control.addEventListener("input",()=>{clearTimeout(whittakerToolsBacktestTimer);whittakerToolsBacktestTimer=setTimeout(renderWhittakerToolsBacktest,50);});}
 $("saveDefaults").onclick=()=>{ const values={};for(const id of PARAM_IDS)values[id]=$(id).type==="checkbox"?$(id).checked:$(id).value;localStorage.setItem("msci-world-defaults",JSON.stringify(values));$("settingsMessage").textContent="Parameter wurden als Standardwerte für diesen Browser gespeichert.";};
-document.querySelectorAll(".tab").forEach(button=>button.onclick=()=>{activeTab=button.dataset.tab;document.querySelectorAll(".tab").forEach(b=>b.classList.toggle("active",b===button));$("toolsTab").classList.toggle("hidden",activeTab!=="tools");$("backtestTab").classList.toggle("hidden",activeTab!=="backtest");$("analyticsTab").classList.toggle("hidden",activeTab!=="analytics");if(activeTab==="backtest")renderBacktest();setTimeout(()=>Plotly.Plots.resize(activeTab==="tools"?"toolsChart":activeTab==="backtest"?"backtestChart":"analyticsChart"),0);});
+document.querySelectorAll(".tab").forEach(button=>button.onclick=()=>{activeTab=button.dataset.tab;document.querySelectorAll(".tab").forEach(b=>b.classList.toggle("active",b===button));$("toolsTab").classList.toggle("hidden",activeTab!=="tools");$("backtestTab").classList.toggle("hidden",activeTab!=="backtest");$("analyticsTab").classList.toggle("hidden",activeTab!=="analytics");if(activeTab==="backtest")renderBacktest();setTimeout(()=>{if(activeTab==="tools"){Plotly.Plots.resize("toolsChart");const wt=plotlyGraph("wtBacktestChart");if(wt)Plotly.Plots.resize(wt);}else Plotly.Plots.resize(activeTab==="backtest"?"backtestChart":"analyticsChart");},0);});
 for(const control of document.querySelectorAll("#backtestTab input,#backtestTab select"))control.addEventListener("change",()=>{clearTimeout(backtestTimer);backtestTimer=setTimeout(renderBacktest,30);});
 $("addTrade").onclick=()=>{$("entryDate").value=new Date().toISOString().slice(0,10);$("modalTradeMessage").textContent="";$("tradeDialog").showModal();};$("cancelTrade").onclick=$("closeTrade").onclick=()=>$("tradeDialog").close();
 $("tradeForm").onsubmit=event=>{event.preventDefault();const entry=nearestPrice($("entryDate").value),exit=$("exitDate").value?nearestPrice($("exitDate").value):null;if(exit&&exit[0]<entry[0]){$("modalTradeMessage").textContent="Das Exit-Datum darf nicht vor dem Entry-Datum liegen.";return;}const trades=loadTrades(),id=Math.max(0,...trades.map(t=>t.id))+1;trades.push({id,entryDate:new Date(entry[0]).toISOString(),exitDate:exit?new Date(exit[0]).toISOString():null,entryPrice:$("entryPrice").value?+$("entryPrice").value:entry[1],exitPrice:$("exitPrice").value?+$("exitPrice").value:exit?exit[1]:null,fees:+$("fees").value||0,notes:$("notes").value});saveTrades(trades);$("tradeDialog").close();$("tradeForm").reset();$("tradeMessage").textContent=`Trade ${id} gespeichert.`;renderTools();renderAnalytics();};
