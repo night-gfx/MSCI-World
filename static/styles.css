@@ -122,3 +122,10 @@ body{background:#fff;color:#0f172a}.shell{max-width:none;width:100%;padding:clam
 .tools-chart-pair .current-chart-panel>.chart{flex:1 0 auto}
 .whittaker-simulation-panel .simulation-help,.phase-rule-grid,.phase-state-rule{display:none!important}
 @media(max-width:680px){.current-chart-summary{grid-template-columns:1fr}.whittaker-context-controls,.phase-settings-grid,.phase-settings-fields{grid-template-columns:1fr}}
+
+
+/* v13: place time-range selector below the current phase summary instead of overlaying the chart header */
+.current-chart-range-row{display:flex;justify-content:flex-end;margin-top:8px}
+.current-chart-topbar .time-range-card{position:static!important;top:auto!important;left:auto!important;right:auto!important;z-index:auto;margin:0;max-width:100%;padding:4px;box-shadow:none}
+.current-chart-topbar .time-range-card .time-range-buttons{width:auto;max-width:100%;grid-template-columns:repeat(5,minmax(42px,1fr))}
+@media(max-width:680px){.current-chart-range-row{justify-content:stretch}.current-chart-topbar .time-range-card{width:100%}.current-chart-topbar .time-range-card .time-range-buttons{width:100%!important}}
