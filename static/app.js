@@ -2,6 +2,7 @@ const $ = id => document.getElementById(id);
 const PARAM_IDS = ["showRegression","regShort","regMedium","regLong","showBollinger","bollingerWindow","bollingerStd","showKalman","kalmanQ","kalmanR","showWhittaker","smoothLambda"];
 const RANGE_OPTIONS = [["6 Monate","6m"],["1 Jahr","1y"],["2 Jahre","2y"],["5 Jahre","5y"],["Max","max"]];
 const ANALYTICS_RANGE_OPTIONS = RANGE_OPTIONS;
+const WHITTAKER_REGRESSION_HOLDOUT_DAYS = 10;
 let payload, activeTab="tools", toolRange="6m", analyticsRange="max", backtestRange="5y", selectedTrade=null,backtestResults={};
 const saved = JSON.parse(localStorage.getItem("msci-world-defaults") || "{}");
 for (const id of PARAM_IDS) if (saved[id] !== undefined) $(id)[$(id).type === "checkbox" ? "checked" : "value"] = saved[id];
@@ -77,18 +78,23 @@ function phaseFromModel(model,displayEnd,completed){
   if(!model)return null;const positive=model.slope>=0;
   return {...model,displayEnd,completed,color:positive?"#16a34a":"#dc2626",direction:positive?1:-1};
 }
-function whittakerTrendRegressions(points,values){
+function whittakerTrendRegressions(points,values,holdoutDays=WHITTAKER_REGRESSION_HOLDOUT_DAYS){
   if(points.length<3)return null;
-  const analysisIndex=points.length-1,pivots=whittakerTurningPoints(values,analysisIndex),completed=[];
+  const analysisIndex=points.length-1,holdout=Math.max(0,Math.floor(+holdoutDays||0)),fitEnd=analysisIndex-holdout;
+  if(fitEnd<1)return {analysisIndex,fitEnd,holdout,pivots:[],completed:[],active:null,phases:[],activeStart:null};
+  // The phase and its regression are determined only from information available through fitEnd.
+  // The fitted line is then extrapolated across the held-out days to analysisIndex.
+  const pivots=whittakerTurningPoints(values,fitEnd),completed=[];
   for(let i=1;i<pivots.length;i++){
     const start=pivots[i-1],end=pivots[i],model=linearFitFiltered(points,values,start,end),phase=phaseFromModel(model,end,true);
     if(phase)completed.push(phase);
   }
   let activeStart=pivots.length?pivots.at(-1):0;
-  if(analysisIndex-activeStart<1&&pivots.length>1)activeStart=pivots.at(-2);
-  const active=analysisIndex-activeStart>=1?phaseFromModel(linearFitFiltered(points,values,activeStart,analysisIndex),analysisIndex,false):null;
+  if(fitEnd-activeStart<1&&pivots.length>1)activeStart=pivots.at(-2);
+  if(fitEnd-activeStart<1)activeStart=Math.max(0,fitEnd-20);
+  const active=fitEnd-activeStart>=1?phaseFromModel(linearFitFiltered(points,values,activeStart,fitEnd),analysisIndex,false):null;
   const phases=active?[...completed,active]:completed;
-  return {analysisIndex,pivots,completed,active,phases,activeStart};
+  return {analysisIndex,fitEnd,holdout,pivots,completed,active,phases,activeStart};
 }
 function whittakerPivotKind(values,index){const before=values[index]-values[index-1],after=values[index+1]-values[index];return before>0&&after<0?"Hoch":before<0&&after>0?"Tief":"Wende";}
 function tradingBreaks(points){
@@ -328,10 +334,12 @@ function backtestSignals(rows,type,calculationStart){const points=backtestSignal
     const first=Math.max(0,i-window+1),sample=points.slice(first,i+1),smooth=whittakerEilers(sample,lambda),currentIndex=smooth.length-1;
     filter[i]=smooth.at(-1);
     if(currentIndex<1)continue;
-    const pivots=whittakerTurningPoints(smooth,currentIndex);let phaseStart=pivots.length?pivots.at(-1):0;
-    if(currentIndex-phaseStart<1&&pivots.length>1)phaseStart=pivots.at(-2);
-    if(currentIndex-phaseStart<1)continue;
-    const model=linearFitFiltered(sample,smooth,phaseStart,currentIndex);if(!model)continue;
+    const fitEnd=currentIndex-WHITTAKER_REGRESSION_HOLDOUT_DAYS;if(fitEnd<1)continue;
+    const pivots=whittakerTurningPoints(smooth,fitEnd);let phaseStart=pivots.length?pivots.at(-1):0;
+    if(fitEnd-phaseStart<1&&pivots.length>1)phaseStart=pivots.at(-2);
+    if(fitEnd-phaseStart<1)phaseStart=Math.max(0,fitEnd-20);
+    if(fitEnd-phaseStart<1)continue;
+    const model=linearFitFiltered(sample,smooth,phaseStart,fitEnd);if(!model)continue;
     const estimate=model.valueAtIndex(currentIndex);phaseRegression[i]=estimate;phaseDirection[i]=model.slope>=0?1:-1;
     if(Number.isFinite(estimate)&&estimate!==0)signals[i]=(points[i][1]/estimate-1)*100;
   }
