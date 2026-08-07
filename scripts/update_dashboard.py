@@ -57,7 +57,7 @@ def download(ticker: str, period: str, interval: str) -> list[list[float | int]]
 
 
 def download_daily_ohlc(ticker: str) -> list[list[float | int]]:
-    """Adjusted OHLC for reproducible close-signal/next-open backtests."""
+    """Adjusted OHLC plus raw daily close for reproducible backtests and Last-Price filters."""
     frame = yf.download(
         ticker, period="max", interval="1d", auto_adjust=False, prepost=False,
         progress=False, threads=False,
@@ -79,7 +79,7 @@ def download_daily_ohlc(ticker: str) -> list[list[float | int]]:
     return [[
         int(row.date.timestamp() * 1000), round(float(row.open), 6),
         round(float(row.high), 6), round(float(row.low), 6),
-        round(float(row.adjusted_close), 6),
+        round(float(row.adjusted_close), 6), round(float(row.close), 6),
     ] for row in values.itertuples(index=False)]
 
 
