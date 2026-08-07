@@ -54,9 +54,8 @@
 <div class="field"><label>Fester Einsatz Absolute (€)</label><input id="wtBtAbsoluteAmount" min="10" step="100" type="number" value="10000"/></div>
 <div class="field"><label>Spread (Basispunkte)</label><input id="wtBtSpread" min="0" step="1" type="number" value="4"/></div>
 <div class="field"><label>Backtest-Zeitraum</label><select class="select" id="wtBtRange"><option value="1y">1 Jahr</option><option value="2y">2 Jahre</option><option selected="" value="5y">5 Jahre</option><option value="max">Max</option></select></div>
-<div class="field"><label>Einstieg, Kurs − Regression</label><div class="inline-condition"><select class="select" id="wtBtBuyOperator"><option selected="" value="&lt;=">≤</option><option value="&lt;">&lt;</option><option value="&gt;=">≥</option><option value="&gt;">&gt;</option></select><input id="wtBtBuyValue" step="0.01" type="number" value="-1"/></div></div>
-<div class="field"><label>Mean-Reversion-Exit, Kurs − Regression</label><div class="inline-condition"><select class="select" id="wtBtSellOperator"><option selected="" value="&gt;=">≥</option><option value="&gt;">&gt;</option><option value="&lt;=">≤</option><option value="&lt;">&lt;</option></select><input id="wtBtSellValue" step="0.01" type="number" value="0"/></div></div>
-<div class="fixed-exit-rule"><strong>Regime-Exit</strong><span id="wtBacktestRegimeRule">ROT bestätigt → Verkauf am nächsten Open</span></div>
+<div class="fixed-exit-rule"><strong>Einstieg</strong><span id="wtBacktestEntryRule">GRÜN bestätigt → Kauf am nächsten Open</span></div>
+<div class="fixed-exit-rule"><strong>Ausstieg</strong><span id="wtBacktestRegimeRule">ROT bestätigt → Verkauf am nächsten Open</span></div>
 </div>
 </div>
 <div class="wt-return-grid">
