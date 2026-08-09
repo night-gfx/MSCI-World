@@ -26,10 +26,10 @@
 <div class="analytics-chart-header"><div class="panel-title analytics-panel-title">Walk-forward-Simulation</div></div>
 <div class="whittaker-context-controls">
 <div class="field"><label>Historienfenster</label><input id="wtBtWindow" min="20" type="number" value="250"/></div>
-<div class="field"><label>ML-Nachbarn (k)</label><input id="wtBtExtremeWindow" min="5" step="2" type="number" value="25"/></div>
+<div class="field"><label>Steigungsfenster (Tage)</label><input id="wtBtExtremeWindow" min="2" step="1" type="number" value="3"/></div>
 <div class="field"><label for="whittakerAsOfDate">Simulationsdatum</label><div class="date-control"><input id="whittakerAsOfDate" type="date"/><button class="date-reset-button" id="whittakerAsOfNow" type="button">Aktuell</button></div></div>
 </div>
-<div class="field"><label>ML-Mindestwahrscheinlichkeit (%)</label><input id="wtBtExtremePct" max="95" min="50" step="1" type="number" value="65"/></div>
+<div class="field"><label>Rauschschwelle (Faktor)</label><input id="wtBtExtremePct" min="0.1" step="0.1" type="number" value="1.5"/></div>
 <div class="whittaker-simulation compact-simulation-controls"><div class="field-label-row"><label>Simulation</label><span class="simulation-date" id="whittakerSimDate">Aktuell</span></div><input class="simulation-slider" id="whittakerSimSlider" max="1" min="0" step="1" type="range" value="1"/><div class="simulation-actions"><button class="mini-button" id="whittakerSimPlay" type="button">▶ Start</button><button class="mini-button secondary" disabled="" id="whittakerSimPause" type="button">Pause</button><button class="mini-button secondary" id="whittakerSimReset" type="button">Aktuell</button><select aria-label="Simulationsgeschwindigkeit" class="select simulation-speed" id="whittakerSimSpeed"><option value="1000">1,0 s</option><option selected="" value="500">0,5 s</option><option value="250">0,25 s</option><option value="100">0,1 s</option></select></div></div>
 </div>
 <div class="chart whittaker-simulation-chart" id="whittakerSimulationChart"></div>
