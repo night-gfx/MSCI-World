@@ -108,7 +108,7 @@ body{background:#fff;color:#0f172a}.shell{max-width:none;width:100%;padding:clam
 .current-summary-item strong{overflow:hidden;color:#0f172a;font-size:12px;text-overflow:ellipsis;white-space:nowrap}
 .current-summary-item strong.phase-positive{color:#15803d}.current-summary-item strong.phase-negative{color:#b91c1c}
 .whittaker-simulation-topbar .analytics-chart-header{margin-bottom:8px!important}
-.whittaker-context-controls{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px}
+.whittaker-context-controls{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-bottom:8px}
 .whittaker-context-controls .field,.phase-settings .field{margin:0}
 .whittaker-context-controls .field label,.phase-settings .field label{margin-bottom:4px;font-size:10px}
 .whittaker-context-controls .field input,.phase-settings .field input{min-height:32px;font-size:11px}
